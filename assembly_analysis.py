@@ -130,10 +130,10 @@ class AssemblyOperation(object):
     if len(operation_pieces) == 1:
       self.operands = None
     else:
-      operands = ' '.join(operation_pieces[1:])
-      operands = list(operands)
+      operands = operation_pieces[1:]
       bracket_depth=0
       for i in range(len(operands)):
+        ## Replace ',' characters not within parentheses:
         if operands[i] == "(":
           bracket_depth+=1
         elif operands[i] == ")":
@@ -147,10 +147,7 @@ class AssemblyOperation(object):
           if list(self.operands[i])[0] == "<":
             del self.operands[i]
         except:
-          print("ERROR:")
-          pprint(instruction)
-          pprint(self.operands)
-          sys.exit(-1)
+          raise("Error during parsing of '{0}'".format(self.operation))
 
   def __str__(self):
     s = "  Instruction: '" + self.instruction + "'"
