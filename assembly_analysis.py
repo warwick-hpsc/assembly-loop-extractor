@@ -130,7 +130,7 @@ class AssemblyOperation(object):
     if len(operation_pieces) == 1:
       self.operands = None
     else:
-      operands = operation_pieces[1:]
+      operands = ' '.join(operation_pieces[1:])
       bracket_depth=0
       for i in range(len(operands)):
         ## Replace ',' characters not within parentheses:
@@ -139,8 +139,7 @@ class AssemblyOperation(object):
         elif operands[i] == ")":
           bracket_depth-=1
         if (operands[i]==",") and (bracket_depth==0):
-          operands[i] = " "
-      operands = ''.join(operands)
+          operands = operands[:i] + " " + operands[i+1:]
       self.operands = operands.split(' ')
       for i in range(len(self.operands)-1, -1, -1):
         try:
