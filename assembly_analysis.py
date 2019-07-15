@@ -664,26 +664,29 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
       del loops[i]
       continue
     else:
-      if job_profile["compiler"] == "intel":
-        ## Intel compiler maintains two loop counters. One is incremented and solely 
-        ## used for bound check. The other is used for edge-array access.
-        pass
-      elif job_profile["compiler"] == "gnu":
-        ## GNU compiler maintains one loop counter. Used both for bound check and edge-array access.
-        # int_bytes = 4
-        # double_bytes = 8
-        # edge_element_size_bytes = (3*double_bytes) + (2*int_bytes)
-        # if (ctr_step % edge_element_size_bytes) != 0:
-        #   print("ERROR: ctr_step \% edge_element_size_bytes != 0")
-        #   print("       ctr_step = {0}".format(ctr_step))
-        #   print("       edge_element_size_bytes = {0}".format(edge_element_size_bytes))
-        #   sys.exit(-1)
-        # ctr_step /= edge_element_size_bytes
-        ## The above logic is specific to MG-CFD loop, so not generically-applicable.
-        pass
-      else:
-        print("ERROR: Do not know how compiler '{0}' implemented loop-bound-check.".format(job_profile["compiler"]))
-        sys.exit(-1)
+      # if job_profile["compiler"] == "intel":
+      #   ## Intel compiler maintains two loop counters. One is incremented and solely 
+      #   ## used for bound check. The other is used for edge-array access.
+      #   pass
+      # elif job_profile["compiler"] == "gnu":
+      #   ## GNU compiler maintains one loop counter. Used both for bound check and edge-array access.
+      #   # int_bytes = 4
+      #   # double_bytes = 8
+      #   # edge_element_size_bytes = (3*double_bytes) + (2*int_bytes)
+      #   # if (ctr_step % edge_element_size_bytes) != 0:
+      #   #   print("ERROR: ctr_step \% edge_element_size_bytes != 0")
+      #   #   print("       ctr_step = {0}".format(ctr_step))
+      #   #   print("       edge_element_size_bytes = {0}".format(edge_element_size_bytes))
+      #   #   sys.exit(-1)
+      #   # ctr_step /= edge_element_size_bytes
+      #   ## The above logic is specific to MG-CFD loop, so not generically-applicable.
+      #   pass
+      # elif job_profile["compiler"] == "cray":
+      #   pass
+      # else:
+      #   print("ERROR: Do not know how compiler '{0}' implemented loop-bound-check.".format(job_profile["compiler"]))
+      #   sys.exit(-1)
+      ## Tentative update: No longer need to perform the above check.
 
       if ctr_step < job_profile["SIMD len"]:
         ## This cannot be the main loop as it is not vectorised at requested width.
