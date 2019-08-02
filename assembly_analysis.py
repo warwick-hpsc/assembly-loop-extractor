@@ -34,7 +34,7 @@ class Loop(object):
       s = "ROOT"
     else:
       l = self.total_length
-      s = " "*indent + "{0} -> {1} [{2}]".format(self.start, self.end, l)
+      s = " "*indent + "Lines {0} -> {1} ({2})".format(self.start+1, self.end+1, l)
     for il in self.inner_loops:
       s += "\n" + il.print_loop(indent+1)
     return s
@@ -390,6 +390,7 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
   asm_filepath = obj_to_asm(obj_filepath)
 
   asm_obj = AssemblyObject(asm_filepath, func_name)
+  asm_clean_filepath = asm_filepath+".clean"
 
   ## Extract labels:
   operations = asm_obj.operations
@@ -890,11 +891,11 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
 
   if loop == None:
     if func_name != "":
-      print("ERROR: Failed to find main loop for function '{0}' in: {1}".format(func_name, asm_filepath))
+      print("ERROR: Failed to find main loop for function '{0}' in: {1}".format(func_name, asm_clean_filepath))
     else:
-      print("ERROR: Failed to find main loop in: {0}".format(asm_filepath))
+      print("ERROR: Failed to find main loop in: {0}".format(asm_clean_filepath))
     if expected_ins_per_iter > 0.0:
-      print(" Expected a main compute loop of {0} instructions".format(round(expected_ins_per_iter, 2)))
+      print(" Expected a main loop of {0} instructions".format(round(expected_ins_per_iter, 2)))
     print(" Detected these loops:")
     for l_id in range(len(loops)):
       l = loops[l_id]
