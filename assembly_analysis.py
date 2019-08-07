@@ -131,6 +131,10 @@ class AssemblyOperation(object):
       self.operands = None
     else:
       operands = ' '.join(operation_pieces[1:])
+      if "<" in operands:
+        operands = operands[:operands.find("<")]
+      operands = re.sub(r" ", "", operands)
+      operands = re.sub(r",$", "", operands)
       bracket_depth=0
       for i in range(len(operands)):
         ## Replace ',' characters not within parentheses:
@@ -141,12 +145,6 @@ class AssemblyOperation(object):
         if (operands[i]==",") and (bracket_depth==0):
           operands = operands[:i] + " " + operands[i+1:]
       self.operands = operands.split(' ')
-      for i in range(len(self.operands)-1, -1, -1):
-        try:
-          if list(self.operands[i])[0] == "<":
-            del self.operands[i]
-        except:
-          raise("Error during parsing of '{0}'".format(self.operation))
 
   def __str__(self):
     s = "  Instruction: '" + self.instruction + "'"
