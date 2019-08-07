@@ -772,6 +772,47 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
               print("ERROR: {0} main loop candidates detected, unsure which to use".format(len(loops)))
 
   if loop == None:
+    ## I have discovered that my 'loop unrolling' detection is imperfect, maybe 
+    ## the target loop is unknowingly unrolled:
+    candidate_unroll_factors = [2, 4]
+    for u in candidate_unroll_factors:
+      unrolled_loop_candidates = []
+      for l in loops:
+        ll = float(l.end-l.start+1)
+        if abs((ll/u)-expected_ins_per_iter) < 0.2:
+          unrolled_loop_candidates.append(l)
+      if len(unrolled_loop_candidates) == 1:
+        l = unrolled_loop_candidates[0]
+        print(" detected one loop that if unrolled matches expected_ins_per_iter:")
+        l.unroll_factor = u
+        l.print_loop_detailed()
+        print("Selecting this loop")
+        loop = l
+        break
+
+  if loop == None and expected_ins_per_iter != 0.0:
+    ## If any of the loops match expected_ins_per_iter then select the first:
+    for l in loops:
+      ll = float(l.end-l.start+1)
+      if abs(ll-expected_ins_per_iter) < 0.2:
+        loop = l
+        break
+
+  if loop == None and expected_ins_per_iter == 0.0:
+    ## Maybe I can make an intelligent guess of the main loop:
+    min_l = min([l.end-l.start+1 for l in loops])
+    max_l = max([l.end-l.start+1 for l in loops])
+    if float(max_l-min_l)/float(min_l) < 0.06:
+      ## All detected loops are similar size, probably slightly 
+      ## different compiler-generated loops of the same source-code 
+      ## loop. Pick the largest loop, as this typically is the main 
+      ## compute loop:
+      for l in loops:
+        if (l.end-l.start+1) == max_l:
+          loop = l
+          break
+
+  if loop == None:
     if func_name != "":
       print("ERROR: Failed to find main loop for function '{0}'".format(func_name))
     else:
