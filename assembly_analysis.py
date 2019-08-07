@@ -834,7 +834,9 @@ def count_loop_instructions(asm_loop_filepath, loop):
 
   for op in operations:
     n_stores = 0
+    n_store_spills = 0
     n_loads = 0
+    n_load_spills = 0
     if op.operands != None:
       ## Look for memory loads and stores
       if not "lea" in op.instruction:
