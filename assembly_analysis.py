@@ -26,7 +26,7 @@ class Loop(object):
     self.isroot = isroot
 
     self.ctr_step = -1
-    self.unroll = -1
+    self.unroll_factor = -1
 
   def print_loop(self, indent):
     s = ""
@@ -42,10 +42,10 @@ class Loop(object):
   def print_loop_detailed(self):
     loop_string = " - {0}".format(self.__str__())
     loop_string += " ( unroll = "
-    if self.unroll == -1:
+    if self.unroll_factor == -1:
       loop_string += "unknown"
     else:
-      loop_string += str(self.unroll)
+      loop_string += str(self.unroll_factor)
     loop_string += ", ctr step = "
     if self.ctr_step == -1:
       loop_string += "unknown"
