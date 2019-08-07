@@ -819,7 +819,9 @@ def count_loop_instructions(asm_loop_filepath, loop):
   arith_counts = {}
   loop_count = 0
   load_count = 0
+  load_spill_count = 0
   store_count = 0
+  store_spill_count = 0
   insn_counts = {}
 
   def increment_count(a, i):
@@ -841,11 +843,23 @@ def count_loop_instructions(asm_loop_filepath, loop):
         l = len(op.operands)
         if l > 1:
           if address_access_rgx.match(op.operands[-1]):
-            n_stores = 1
+            if "," in op.operands[-1]:
+              # An offset present implies this load is performing an array lookup
+              n_stores += 1
+            else:
+              # No offset implies that this load is not accessing an array, which I assume 
+              # to mean the store is of a register spill
+              n_store_spills += 1
           for operand in op.operands[0:(l-1)]:
             if address_access_rgx.match(operand) and not "floatpacket" in operand:
               ## 'floatpacket' refers to a constant held in memory
-              n_loads += 1
+              if "," in operand:
+                # An offset present implies this load is performing an array lookup
+                n_loads += 1
+              else:
+                # No offset implies that this load is not accessing an array, which I assume 
+                # to mean the load is of a previously-spilled register value.
+                n_load_spills += 1
 
     ## Handle aliases:
     if op.instruction=="xchg" and len(op.operands)==2 and op.operands[0]=="%ax" and op.operands[0]==op.operands[1]:
@@ -857,7 +871,19 @@ def count_loop_instructions(asm_loop_filepath, loop):
     increment_count(insn_counts, op.instruction)
 
     load_count += n_loads
+    load_spill_count += n_load_spills
     store_count += n_stores
+    store_spill_count += n_store_spills
+
+  # Allow for faulty spill detection:
+  if load_count == 0 and load_spill_count > 0:
+    # All memory loads mis-identified as spills:
+    load_count = load_spill_count
+    load_spill_count = 0
+  if store_count == 0 and store_spill_count > 0:
+    # All memory stores mis-identified as spills:
+    store_count = store_spill_count
+    store_spill_count = 0
 
   if loop.unroll_factor > 1:
     ## For modelling, need to know instruction counts per non-unrolled iteration:
@@ -866,13 +892,17 @@ def count_loop_instructions(asm_loop_filepath, loop):
 
     ## Also scale down loads and stores:
     load_count /= float(loop.unroll_factor)
+    load_spill_count /= float(loop.unroll_factor)
     store_count /= float(loop.unroll_factor)
+    store_spill_count /= float(loop.unroll_factor)
 
   loop_stats = {}
   for k in insn_counts.keys():
     loop_stats[k] = insn_counts[k]
 
   loop_stats["LOADS"] = load_count
+  loop_stats["LOAD_SPILLS"] = load_spill_count
   loop_stats["STORES"] = store_count
+  loop_stats["STORE_SPILLS"] = store_spill_count
 
   return loop_stats
