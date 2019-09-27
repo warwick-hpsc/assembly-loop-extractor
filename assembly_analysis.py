@@ -356,13 +356,12 @@ def obj_to_asm(obj_filepath):
     print("ERROR: Cannot find file '" + obj_filepath + "'")
     sys.exit(-1)
 
-  ## Extract raw assembly:
   asm_filepath = obj_filepath + ".asm"
   if os.path.isfile(asm_filepath):
     return asm_filepath
-
-  objdump_command  = "objdump"
-  objdump_command += " -d --no-show-raw-insn {0}".format(obj_filepath)
+  ## Extract raw assembly:
+  # objdump_command = "objdump -D --no-show-raw-insn {0}".format(obj_filepath)
+  objdump_command = "objdump -d --no-show-raw-insn {0}".format(obj_filepath)
   objdump_command += ' | sed "s/^Disassembly of section/ fnc: Disassembly/g"'
   objdump_command += ' | sed "s/:$//g"'
   objdump_command += ' | grep "^ "'
