@@ -498,6 +498,22 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
   jump_ops = list(jump_ops)
   jump_ops.sort(key=lambda j: j.idx)
 
+  ## Update: ignore 'ja' instruction that closely follows a sqrt. GCC is adding these, 
+  ##         I guess error detection.
+  jump_ops_within_loop_pruned = []
+  num_jumps_discarded = 0
+  for j in jump_ops:
+    discard_jump = False
+    if j.instruction == "ja":
+      for i in range(j.idx, j.idx-2, -1):
+        if "sqrt" in operations[i].instruction:
+          discard_jump = True
+          num_jumps_discarded += 1
+          break
+    if not discard_jump:
+      jump_ops_within_loop_pruned.append(j)
+  jump_ops = jump_ops_within_loop_pruned
+
   loop_len_threshold = 5
 
   # ## added for GCC compatibility?
