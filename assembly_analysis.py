@@ -683,116 +683,116 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
   ## Select the loop that agrees with measurement of runtime measurement of #instructions:
   loop = None
 
-  ## TODO: Filter out loops that do not increment loop ctr
-  for i in range(len(loops)-1, -1, -1):
-    l = loops[i]
-    # print(" Analysing loop:")
-    # print(" " + l.__str__())
+  if len(loops) > 1:
+    for i in range(len(loops)-1, -1, -1):
+      l = loops[i]
+      # print(" Analysing loop:")
+      # print(" " + l.__str__())
 
-    if operations[l.end].instruction[0] != "j":
-      ## If this loop candidate does not end with a jump instruction, then 
-      ## it probably is not the compute loop.
-      del loops[i]
-      continue
+      if operations[l.end].instruction[0] != "j":
+        ## If this loop candidate does not end with a jump instruction, then 
+        ## it probably is not the compute loop.
+        del loops[i]
+        continue
 
-    ## Find the loop counter variable:
-    cmp_op = None
-    for j in range(l.end, -1, -1):
-      op = operations[j]
-      if op.instruction == "cmp":
-        cmp_op = op
-        break
+      ## Find the loop counter variable:
+      cmp_op = None
+      for j in range(l.end, -1, -1):
+        op = operations[j]
+        if op.instruction == "cmp":
+          cmp_op = op
+          break
 
-    if cmp_op == None:
-      print("ERROR: Failed to find cmp for loop: ")
-      print(l)
-      sys.exit(-1)
+      if cmp_op == None:
+        print("ERROR: Failed to find cmp for loop: ")
+        print(l)
+        sys.exit(-1)
 
-    ## Find add operation that adds a scalar to one of the cmp operands:
-    ctr_name = ""
-    for j in range(l.end, -1, -1):
-      op = operations[j]
-      if op.instruction == "inc":
-        if op.operands[0] == cmp_op.operands[0]:
-          ctr_name = cmp_op.operands[0]
-        elif op.operands[0] == cmp_op.operands[1]:
-          ctr_name = cmp_op.operands[1]
-      elif op.instruction == "add" and op.operands[0][0:3] == "$0x":
-        if op.operands[1] == cmp_op.operands[0]:
-          ctr_name = cmp_op.operands[0]
-        elif op.operands[1] == cmp_op.operands[1]:
-          ctr_name = cmp_op.operands[1]
+      ## Find add operation that adds a scalar to one of the cmp operands:
+      ctr_name = ""
+      for j in range(l.end, -1, -1):
+        op = operations[j]
+        if op.instruction == "inc":
+          if op.operands[0] == cmp_op.operands[0]:
+            ctr_name = cmp_op.operands[0]
+          elif op.operands[0] == cmp_op.operands[1]:
+            ctr_name = cmp_op.operands[1]
+        elif op.instruction == "add" and op.operands[0][0:3] == "$0x":
+          if op.operands[1] == cmp_op.operands[0]:
+            ctr_name = cmp_op.operands[0]
+          elif op.operands[1] == cmp_op.operands[1]:
+            ctr_name = cmp_op.operands[1]
 
-      if ctr_name != "":
-        # print("  Loop ctr '{0}' found on line {1}".format(ctr_name, j))
-        break
+        if ctr_name != "":
+          # print("  Loop ctr '{0}' found on line {1}".format(ctr_name, j))
+          break
 
-    if ctr_name == "":
-      # print("ERROR: Failed to find ctr_name for loop: ")
-      # print(l)
-      # sys.exit(-1)
-      print("WARNING: Failed to find ctr_name for loop: ")
-      l.unroll_factor = 1
-      print(l)
-      continue
+      if ctr_name == "":
+        # print("ERROR: Failed to find ctr_name for loop: ")
+        # print(l)
+        # sys.exit(-1)
+        print("WARNING: Failed to find ctr_name for loop: ")
+        l.unroll_factor = 1
+        print(l)
+        continue
 
-    # print("  ctr_name = {0}".format(ctr_name))
+      # print("  ctr_name = {0}".format(ctr_name))
 
-    ## Determine what value is added to the ctr on each iteration:
-    ctr_step = 0
-    for j in range(l.end, l.start-1, -1):
-      op = operations[j]
-      if op.instruction == "inc" and op.operands[0] == ctr_name:
-        ctr_step += 1
-      elif "add" in op.instruction and op.operands[1] == ctr_name:
-        if op.operands[0][0] == '$':
-          ctr_step += int(op.operands[0].replace('$',''), 0)
-    if ctr_step == 0:
-      # print("  Failed to find loop ctr inc/add, discarding as a 'main loop' candidate:")
-      del loops[i]
-      continue
-    else:
-      if job_profile["compiler"] == "intel":
-        ## Intel compiler maintains two loop counters. One is incremented and solely 
-        ## used for bound check. The other is used for edge-array access.
-        pass
-      elif job_profile["compiler"] == "gnu":
-        ## GNU compiler maintains one loop counter. Used both for bound check and edge-array access 
-        ## so it counts bytes, not array elements as Intel does. This makes determining whether 
-        ## unrolling occured more difficult.
-        int_bytes = 4
-        double_bytes = 8
-        edge_element_size_bytes = (3*double_bytes) + (2*int_bytes)
-        if (ctr_step % edge_element_size_bytes) == 0:
-          ctr_step /= edge_element_size_bytes
-        else:
-          # print("ERROR: ctr_step \% edge_element_size_bytes != 0")
-          # print("       ctr_step = {0}".format(ctr_step))
-          # print("       edge_element_size_bytes = {0}".format(edge_element_size_bytes))
-          # sys.exit(-1)
-          pass
-        # ## NOTE: The above logic is specific to MG-CFD loop, so not generically-applicable.
-        # pass
-      # elif job_profile["compiler"] == "cray":
-      #   pass
-      # else:
-      #   print("ERROR: Do not know how compiler '{0}' implemented loop-bound-check.".format(job_profile["compiler"]))
-      #   sys.exit(-1)
-
-      # if ctr_step < job_profile["SIMD len"]:
-      #   ## This cannot be the main loop as it is not vectorised at requested width.
-      #   # print("  ctr_step={0} < simd_len={1}, so cannot be main loop.".format(ctr_step, job_profile["SIMD len"]))
-      #   del loops[i]
-      # else:
-      ## Update: my loop counter detection is flawed, do not delete loop
-      l.ctr_step = ctr_step
-
-      if ctr_step > job_profile["SIMD len"]:
-        unroll_factor = ctr_step / job_profile["SIMD len"]
+      ## Determine what value is added to the ctr on each iteration:
+      ctr_step = 0
+      for j in range(l.end, l.start-1, -1):
+        op = operations[j]
+        if op.instruction == "inc" and op.operands[0] == ctr_name:
+          ctr_step += 1
+        elif "add" in op.instruction and op.operands[1] == ctr_name:
+          if op.operands[0][0] == '$':
+            ctr_step += int(op.operands[0].replace('$',''), 0)
+      if ctr_step == 0:
+        # print("  Failed to find loop ctr inc/add, discarding as a 'main loop' candidate:")
+        del loops[i]
+        continue
       else:
-        unroll_factor = 1
-      # print("  unroll_factor: {0}".format(unroll_factor))
-      l.unroll_factor = unroll_factor
+        if job_profile["compiler"] == "intel":
+          ## Intel compiler maintains two loop counters. One is incremented and solely 
+          ## used for bound check. The other is used for edge-array access.
+          pass
+        elif job_profile["compiler"] == "gnu":
+          ## GNU compiler maintains one loop counter. Used both for bound check and edge-array access 
+          ## so it counts bytes, not array elements as Intel does. This makes determining whether 
+          ## unrolling occured more difficult.
+          int_bytes = 4
+          double_bytes = 8
+          edge_element_size_bytes = (3*double_bytes) + (2*int_bytes)
+          if (ctr_step % edge_element_size_bytes) == 0:
+            ctr_step /= edge_element_size_bytes
+          else:
+            # print("ERROR: ctr_step \% edge_element_size_bytes != 0")
+            # print("       ctr_step = {0}".format(ctr_step))
+            # print("       edge_element_size_bytes = {0}".format(edge_element_size_bytes))
+            # sys.exit(-1)
+            pass
+          # ## NOTE: The above logic is specific to MG-CFD loop, so not generically-applicable.
+          # pass
+        # elif job_profile["compiler"] == "cray":
+        #   pass
+        # else:
+        #   print("ERROR: Do not know how compiler '{0}' implemented loop-bound-check.".format(job_profile["compiler"]))
+        #   sys.exit(-1)
+
+        # if ctr_step < job_profile["SIMD len"]:
+        #   ## This cannot be the main loop as it is not vectorised at requested width.
+        #   # print("  ctr_step={0} < simd_len={1}, so cannot be main loop.".format(ctr_step, job_profile["SIMD len"]))
+        #   del loops[i]
+        # else:
+        ## Update: my loop counter detection is flawed, do not delete loop
+        l.ctr_step = ctr_step
+
+        if ctr_step > job_profile["SIMD len"]:
+          unroll_factor = ctr_step / job_profile["SIMD len"]
+        else:
+          unroll_factor = 1
+        # print("  unroll_factor: {0}".format(unroll_factor))
+        l.unroll_factor = unroll_factor
 
   if len(loops) == 0:
     print("ERROR: No 'main loop' candidates left.")
