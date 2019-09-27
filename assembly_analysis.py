@@ -516,13 +516,6 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
 
   loop_len_threshold = 5
 
-  # ## added for GCC compatibility?
-  # ## New method for setting loop length threshold: 50% of biggest jump:
-  # jump_distances = [abs(j.idx - j.jump_target_idx) for j in jump_ops]
-  # jump_distances.sort(reverse=True)
-  # loop_len_threshold = jump_distances[0] / 2;
-  # print("loop_len_threshold = {0}".format(loop_len_threshold))
-
   ## Identify backward jumps that follow a compare
   loop_jump_ops = Set()
   for jump_op in jump_ops:
@@ -544,27 +537,6 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
 
   loop_jump_ops = list(loop_jump_ops)
   loop_jump_ops.sort(key=lambda j: (j.idx+j.jump_target_idx)/2)
-
-  # print("{0} backward jumps found".format(len(loop_jump_ops)))
-  # for l in loop_jump_ops:
-  #   print(l)
-  # quit()
-
-  # ## Identify forward jumps (added for GCC compatibility?):
-  # forward_jumps = []
-  # for jump_op in jump_ops:
-  #   if jump_op.idx < label_to_idx[jump_op.operands[0]]:
-  #     forward_jumps.append(jump_op)
-  # if len(forward_jumps) > 0:
-  #   print("{0} forward_jumps".format(len(forward_jumps)))
-  #   print("forward_jumps:")
-  #   for o in forward_jumps:
-  #     # print(o)
-  #     # print("  Jumps to line idx {0}".format(o.jump_target_idx))
-  #     # print("  Loop length is {0} instructions.".format(o.idx - o.jump_target_idx + 1))
-  #     print("  {0} -> {1} ({2} instructions)".format(o.idx, o.jump_target_idx, o.jump_target_idx-o.idx+1))
-  #     # print("")
-  # quit()
 
   ## Next identify unbroken instruction sequences within these loops:
   jump_target_label_indices_sorted = list(jump_target_label_indices)
@@ -598,22 +570,12 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
         jump_ops_within_loop_pruned.append(j)
     jump_ops_within_loop = jump_ops_within_loop_pruned
 
-    # interruption_indices = [j.idx for j in jump_ops_within_loop] + [j.jump_target_idx for j in jump_ops_within_loop]
     interruption_indices = Set()
-
-    # exit_points = [j.idx for j in jump_ops if (j.idx > loop_start_idx and j.idx < loop_end_idx)]
-    # for i in exit_points:
-    #   interruption_indices.add(i+1)
-
-    # entry_points = [j.jump_target_idx for j in jump_ops if (j.jump_target_idx >= loop_start_idx and j.jump_target_idx <= loop_end_idx)]
-    # entry_points = [j.jump_target_idx for j in jump_ops if (j.idx > loop_start_idx and j.idx < loop_end_idx and j.jump_target_idx > loop_start_idx and j.jump_target_idx < loop_end_idx)]
 
     ## Find forward jumps that launch and land within the backward jump 'loop_jump_op', with the condition 
     ## that the quantity of instructions remaining outside of the 'forward bypass' is sufficient for a
     ## compute loop:
     entry_points = []
-    # for j in jump_ops:
-    #   if j.idx > loop_start_idx and j.idx < loop_end_idx and j.jump_target_idx > loop_start_idx and j.jump_target_idx < loop_end_idx:
     for j in jump_ops_within_loop:
       if j.idx > j.jump_target_idx:
         ## j is a backward jump, so target is an 'entry point'
@@ -632,9 +594,6 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
 
     interruption_indices = list(interruption_indices)
     interruption_indices.sort()
-
-    # print("interruption_indices:")
-    # pprint(interruption_indices)
 
     sequences = Set()
     if len(interruption_indices)==0:
@@ -773,11 +732,6 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
             pass
           # ## NOTE: The above logic is specific to MG-CFD loop, so not generically-applicable.
           # pass
-        # elif job_profile["compiler"] == "cray":
-        #   pass
-        # else:
-        #   print("ERROR: Do not know how compiler '{0}' implemented loop-bound-check.".format(job_profile["compiler"]))
-        #   sys.exit(-1)
 
         # if ctr_step < job_profile["SIMD len"]:
         #   ## This cannot be the main loop as it is not vectorised at requested width.
