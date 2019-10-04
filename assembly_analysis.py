@@ -835,6 +835,10 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
         loop = l
         break
 
+  if loop == None:
+    ## Apply several heuristics to guess which of the detected loop is the target loop:
+    print("Could not find main compute loop, applying heuristics to: {0}".format(asm_filepath))
+
   if loop == None and expected_ins_per_iter != 0.0:
     ## If any of the loops match expected_ins_per_iter then select the first:
     for l in loops:
@@ -842,6 +846,20 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
       if abs(ll-expected_ins_per_iter) < 0.2:
         loop = l
         break
+
+  if loop == None and expected_ins_per_iter != 0.0 and job_profile["SIMD len"] > 1:
+    ## Maybe user requested compiler to vectorise the loop, but was not possible
+    failed_simd_loop_candidates = []
+    for l in loops:
+      ll = float(l.end-l.start+1)
+      if int(ll) == int(expected_ins_per_iter / job_profile["SIMD len"]):
+        failed_simd_loop_candidates.append(l)
+    if len(failed_simd_loop_candidates) == 1:
+      l = failed_simd_loop_candidates[0]
+      print(" detected one loop that would be generated if requested SIMD failed:")
+      l.print_loop_detailed()
+      print(" selecting this loop")
+      loop = l
 
   if loop == None and expected_ins_per_iter == 0.0:
     ## Maybe I can make an intelligent guess of the main loop:
