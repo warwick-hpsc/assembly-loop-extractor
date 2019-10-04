@@ -662,7 +662,7 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
 
       if operations[l.end].instruction[0] != "j":
         ## If this loop candidate does not end with a jump instruction, then 
-        ## it probably is not the compute loop.
+        ## it is unlikely to be the compute loop.
         del loops[i]
         continue
 
@@ -673,13 +673,13 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
         if op.instruction == "cmp":
           cmp_op = op
           break
-
       if cmp_op == None:
-        print("ERROR: Failed to find cmp for loop: ")
+        print("ERROR: Failed to find 'cmp' for loop: ")
         print(l)
         sys.exit(-1)
 
-      ## Find add operation that adds a scalar to one of the cmp operands:
+      ## Find 'add' operation that adds a scalar to one of the cmp operands, use 
+      ## that to determine which 'cmp' operand is the counter:
       ctr_name = ""
       for j in range(l.end, -1, -1):
         op = operations[j]
@@ -699,12 +699,10 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
           break
 
       if ctr_name == "":
-        # print("ERROR: Failed to find ctr_name for loop: ")
-        # print(l)
-        # sys.exit(-1)
-        print("WARNING: Failed to find ctr_name for loop: ")
         l.unroll_factor = 1
-        print(l)
+        # print("WARNING: Failed to find ctr_name for loop: ")
+        # print(l)
+        # print(obj_filepath)
         continue
 
       # print("  ctr_name = {0}".format(ctr_name))
@@ -757,7 +755,6 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
           unroll_factor = ctr_step / job_profile["SIMD len"]
         else:
           unroll_factor = 1
-        # print("  unroll_factor: {0}".format(unroll_factor))
         l.unroll_factor = unroll_factor
 
   if len(loops) == 0:
@@ -834,7 +831,7 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
         print(" detected one loop that if unrolled matches expected_ins_per_iter:")
         l.unroll_factor = u
         l.print_loop_detailed()
-        print("Selecting this loop")
+        print(" selecting this loop")
         loop = l
         break
 
