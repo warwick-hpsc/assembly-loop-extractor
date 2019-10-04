@@ -370,7 +370,7 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
                                  expected_ins_per_iter=0.0, 
                                  func_name="", 
                                  avx512cd_required=False, 
-                                 num_conflicts_per_iteration = 1):
+                                 num_conflicts_per_iteration = 0):
   if not os.path.isfile(obj_filepath):
     print("ERROR: Cannot find file '" + obj_filepath + "'")
     sys.exit(-1)
@@ -420,80 +420,92 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
         ## Serial remainder loops should be small
         continue
 
-      serial_remainder_loop_found = False
+      jmp_back = jump_op
 
-      ## Search backwards for another jump that closely bypasses 'jump_op'. 
+      ## Search backwards for another jump that closely bypasses 'jmp_back'. 
       ## To be the bypass jump, 2 conditions must be met:
-      ## 1 - Source position within 10 instructions before jump_op's target
-      ## 2 - Target position within 5 instructions of jump_op's position
+      ## 1 - Source position within 11 instructions before jmp_back's target
+      ## 2 - Target position within 6 instructions of jmp_back's position
       forward_bypass_jump_found = False
       forward_bypass_jump = None
-      threshold_pre=10
-      threshold_post=5
-      for i in range(jump_op.idx-1, jump_op.jump_target_idx-10, -1):
+      threshold_pre=11
+      threshold_post=6
+      for i in range(jmp_back.jump_target_idx, jmp_back.jump_target_idx-threshold_pre, -1):
         if i in jump_op_indices:
           jump_op2 = [j for j in jump_ops if j.idx==i][0]
 
-          if (jump_op.jump_target_idx > jump_op2.idx) and \
-             (jump_op.jump_target_idx - jump_op2.idx < threshold_pre) and \
-             (jump_op2.jump_target_idx > jump_op.idx) and \
-             (jump_op2.jump_target_idx - jump_op.idx < threshold_post):
+          if jump_op2.jump_target_idx < jump_op2.idx:
+            # Another backward jump preceding 'jmp_back' rules it out as 
+            # being a serial remainder loop
+            break
+
+          jmp_forward = jump_op2
+
+          if (jmp_back.jump_target_idx > jmp_forward.idx) and \
+             ((jmp_back.jump_target_idx - jmp_forward.idx) < threshold_pre) and \
+             (jmp_forward.jump_target_idx > jmp_back.idx) and \
+             ((jmp_forward.jump_target_idx - jmp_back.idx) < threshold_post):
              ## This is the forward bypass jump: 
              forward_bypass_jump_found = True
-             forward_bypass_jump = jump_op2
+             forward_bypass_jump = jmp_forward
              break
           else:
-            ## Any other type of jump immediately rules out 'jump_op' as being 
+            ## Any other type of jump immediately rules out 'jmp_back' as being 
             ## a serial remainder loop
             break
 
       if not forward_bypass_jump_found:
         continue
 
-      ## Now to confirm that serial remainder loop has been found, look for 
-      ## the kortest instruction that should closely precede the jump back:
-      kortest_found = False
-      for i in range(forward_bypass_jump.jump_target_idx-1, forward_bypass_jump.jump_target_idx-5, -1):
+      ## Look for a kortest instruction that should closely precede the jump back:
+      inner_kortest_found = False
+      for i in range(jmp_back.idx-1, jmp_back.idx-5, -1):
         op = operations[i]
         if "kortest" in op.instruction:
-          kortest_found = True
+          inner_kortest_found = True
+          break
+      ## Look for a kortest instruction that should precede the bypass jump:
+      outer_kortest_found = False
+      for i in range(forward_bypass_jump.idx-1, 0, -1):
+        if i in jump_op_indices:
+          ## End search
+          break
+        op = operations[i]
+        if "kortest" in op.instruction:
+          outer_kortest_found = True
           break
 
-      serial_remainder_loop_found = forward_bypass_jump_found and kortest_found
+      serial_remainder_loop_found = forward_bypass_jump_found and inner_kortest_found and outer_kortest_found
 
       if serial_remainder_loop_found:
-        jump_ops.remove(jump_op)
-        jump_op_indices.remove(jump_op.idx)
-        jump_target_label_indices.remove(jump_op.jump_target_idx)
-        ## Next, find the bypass jump that surrounds loop:
-        found_bypass = False
-        for jump_op2 in jump_ops:
-          if ((jump_op2.jump_target_idx-jump_op.idx) < 5) and (jump_op2.jump_target_idx > jump_op.idx):
-            ## Found it
-            found_bypass = True
-            jump_ops.remove(jump_op2)
-            jump_op_indices.remove(jump_op2.idx)
-            jump_target_label_indices.remove(jump_op2.jump_target_idx)
-            break
-        if not found_bypass:
-          print("ERROR: Did not find bypass jump for AVX-512-CD jump:")
-          print(jump_op)
-          sys.exit(-1)
+        jump_ops.remove(jmp_back)
+        jump_op_indices.remove(jmp_back.idx)
+        jump_target_label_indices.remove(jmp_back.jump_target_idx)
+        ## UPDATE: I already have forward bypass jump:
+        jump_ops.remove(forward_bypass_jump)
+        jump_op_indices.remove(forward_bypass_jump.idx)
+        jump_target_label_indices.remove(forward_bypass_jump.jump_target_idx)
 
-        avx512_conflict_loops.append(jump_op)
+        avx512_conflict_loops.append(jmp_back)
+
+  avx512_conflict_loops = list(avx512_conflict_loops)
+  avx512_conflict_loops.sort(key=lambda j: j.idx)
 
   n = len(avx512_conflict_loops)
   if n==0 and avx512_used and avx512cd_required:
-    print("AVX512 used and conflict detection required but no conflict detection loops found.")
+    print("AVX512 used and AVX-512-CD required but no AVX-512-CD loops found.")
+    print(obj_filepath)
     sys.exit(-1)
   if n!=0 and avx512_used and not avx512cd_required:
-    print("AVX512 used nd conflict detection not required but conflict detection loops were found.")
+    print("AVX512 used and AVX-512-CD not required but {0} AVX-512-CD loops were found.".format(n))
+    print(obj_filepath)
     sys.exit(-1)
   if n%num_conflicts_per_iteration != 0:
-    print("Number of detected AVX512 conflict loops not a multiple of {0}: {1}".format(num_conflicts_per_iteration, n))
+    print("ERROR: Number of detected AVX-512-CD loops not a multiple of {0}: {1}".format(num_conflicts_per_iteration, n))
+    print(obj_filepath)
+    for l in avx512_conflict_loops:
+      print(l)
     sys.exit(-1)
-  if avx512_used:
-    print("{0}x avx512_conflict_loops".format(n))
 
   jump_ops = list(jump_ops)
   jump_ops.sort(key=lambda j: j.idx)
