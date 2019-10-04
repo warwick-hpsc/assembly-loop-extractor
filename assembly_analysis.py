@@ -2,10 +2,17 @@ import os
 import re
 from sets import Set
 import copy
-import pandas as pd
 import sys
 
 from pprint import pprint
+
+cmnt_line_rgx = re.compile("^ *#")
+empty_line_rgx = re.compile("^[ \t]*$")
+jump_ins_rgx = re.compile("^[ \t]*j")
+jump_label_intel_rgx = re.compile("^\.\.B[0-9]\.[0-9]+:")
+jump_label_gnu_rgx = re.compile("^\.L[0-9]+:")
+jump_label_obj_rgx = re.compile("^[0-9a-z]+$")
+noise_rgx = re.compile("^[\.]+[a-zA-Z]")
 
 class Loop(object):
   def __init__(self, start, end, isroot=False):
@@ -17,19 +24,33 @@ class Loop(object):
     self.isroot = isroot
 
     self.ctr_step = -1
+    self.unroll_factor = -1
 
   def print_loop(self, indent):
     s = ""
     if self.isroot:
       s = "ROOT"
     else:
-      # l = self.real_length
       l = self.total_length
-      s = " "*indent + "{0} -> {1} [{2}]".format(self.start, self.end, l)
-      # s = " "*indent + "{0} -> {1}".format(self.start, self.end)
+      s = " "*indent + "Lines {0} -> {1} ({2})".format(self.start+1, self.end+1, l)
     for il in self.inner_loops:
       s += "\n" + il.print_loop(indent+1)
     return s
+
+  def print_loop_detailed(self):
+    loop_string = " - {0}".format(self.__str__())
+    loop_string += " ( unroll = "
+    if self.unroll_factor == -1:
+      loop_string += "unknown"
+    else:
+      loop_string += str(self.unroll_factor)
+    loop_string += ", ctr step = "
+    if self.ctr_step == -1:
+      loop_string += "unknown"
+    else:
+      loop_string += str(self.ctr_step)
+    loop_string += " )"
+    print(loop_string)
 
   def __str__(self):
     return self.print_loop(0)
@@ -42,14 +63,6 @@ class Loop(object):
 
 def clean_asm_file(asm_filepath, func_name=""):
   asm_clean_filepath = asm_filepath + ".clean"
-
-  cmnt_line_rgx = re.compile("^ *#")
-  empty_line_rgx = re.compile("^[ \t]*$")
-  jump_ins_rgx = re.compile("^[ \t]*j")
-  jump_label_intel_rgx = re.compile("^\.\.B[0-9]\.[0-9]+:")
-  jump_label_gnu_rgx = re.compile("^\.L[0-9]+:")
-  jump_label_obj_rgx = re.compile("^[0-9a-z]+$")
-  noise_rgx = re.compile("^[\.]+[a-zA-Z]")
 
   if func_name != "":
     func_name_rgx = re.compile("^.*{0}[^_].*$".format(func_name))
@@ -116,6 +129,75 @@ def clean_asm_file(asm_filepath, func_name=""):
 
   return asm_clean_filepath
 
+def clean_asm_file_v2(asm_filepath, func_name=""):
+  asm_lines = []
+  with open(asm_filepath, "r") as asm:
+    for line in asm:
+      line = line.replace('\t', ' ')
+      line = re.sub(r" +", " ", line)
+      line = re.sub(r"^ *", "", line)
+      asm_lines.append(line)
+
+  if func_name != "":
+    # Attempt to find the block of instructions relating to function
+    func_lines = []
+
+    # Possibility #1: function kernel in a separate disassembly section:
+    func_in_separate_disassembly = False
+    # func_name_rgx = re.compile("^.*{0}[^_].*$".format(func_name))
+    func_name_rgx = re.compile("^.*{0}.*$".format(func_name))
+    parse = False
+    for line in asm_lines:
+      if "Disassembly" in line and func_name_rgx.match(line):
+        print("{0} found in separate disassembly section".format(func_name))
+        func_in_separate_disassembly = True
+        parse = True
+      if func_in_separate_disassembly and "<" in line and (not func_name_rgx.match(line)):
+        parse = False
+      if parse:
+        func_lines.append(line)
+
+    # Possibility #2: kernel assembly embedded with all other assembly:
+    if not func_in_separate_disassembly:
+      func_first_appearance = -1
+      func_last_appearance = -1
+      i = -1
+      for line in asm_lines:
+        i+=1
+        if "<" in line and func_name_rgx.match(line):
+          if func_first_appearance == -1:
+            func_first_appearance = i
+          func_last_appearance = i
+      if func_first_appearance == -1 and func_last_appearance == -1:
+        raise Exception("Failed to find function '{0}' in: {1}".format(func_name, asm_filepath))
+      # Keep line after last appearance:
+      func_last_appearance += 1
+      # print("{0} found between lines {1} and {2}".format(func_name, func_first_appearance, func_last_appearance))
+      func_lines = asm_lines[func_first_appearance:(func_last_appearance+1)]
+    # print("Have extracted {0} lines".format(len(func_lines)))
+
+    # Now clean:
+    func_lines_clean = []
+    for line in func_lines:
+      if cmnt_line_rgx.match(line):
+        continue
+      elif empty_line_rgx.match(line):
+        continue
+      elif noise_rgx.match(line) and not (jump_label_intel_rgx.match(line) or jump_label_gnu_rgx.match(line)):
+        continue
+      elif "(bad)" in line:
+        continue
+      elif "Disassembly" in line:
+        continue
+      func_lines_clean.append(line)
+    # print("Have {0} lines after clean".format(len(func_lines_clean)))
+
+    asm_clean_filepath = asm_filepath + ".clean"
+    with open(asm_clean_filepath, "w") as asm_out:
+      for line in func_lines_clean:
+        asm_out.write(line)
+
+  return asm_clean_filepath
 
 class AssemblyOperation(object):
   def __init__(self, operation, label, line_num, idx):
@@ -135,9 +217,9 @@ class AssemblyOperation(object):
         operands = operands[:operands.find("<")]
       operands = re.sub(r" ", "", operands)
       operands = re.sub(r",$", "", operands)
-      bracket_depth=0
+      bracket_depth = 0
       for i in range(len(operands)):
-        ## Replace ',' characters not within parentheses:
+        ## Replace ',' characters not within parentheses with ' ':
         if operands[i] == "(":
           bracket_depth+=1
         elif operands[i] == ")":
@@ -172,12 +254,12 @@ class AssemblyOperation(object):
   def __ne__(self, other):
     return not self.__eq__(other)
 
-
 class AssemblyObject(object):
   def __init__(self, asm_filepath, func_name):
     self.asm_filepath = asm_filepath
 
-    self.asm_clean_filepath = clean_asm_file(asm_filepath, func_name)
+    # self.asm_clean_filepath = clean_asm_file(asm_filepath, func_name)
+    self.asm_clean_filepath = clean_asm_file_v2(asm_filepath, func_name)
 
     self.asm_clean_numLines = 0
     for line in open(self.asm_clean_filepath).xreadlines():
@@ -234,7 +316,7 @@ class AssemblyObject(object):
         if not jump_target_label in self.label_to_idx.keys():
           # print("ERROR: Unknown jump label {0} on line {1}".format(jump_target_label, op.line_num))
           # sys.exit(-1)
-          print(" - notice: Ignoring jump on line {1} to unknown label {0}".format(jump_target_label, op.line_num))
+          # print(" - notice: Ignoring jump on line {1} to unknown label {0}".format(jump_target_label, op.line_num))
           continue
 
         self.jump_target_labels.add(jump_target_label)
@@ -267,10 +349,9 @@ def obj_to_asm(obj_filepath):
 
   asm_filepath = obj_filepath + ".asm"
   if os.path.isfile(asm_filepath):
-    return(asm_filepath)
+    return asm_filepath
 
   ## Extract raw assembly:
-  # objdump_command = "objdump -D --no-show-raw-insn {0}".format(obj_filepath)
   objdump_command = "objdump -d --no-show-raw-insn {0}".format(obj_filepath)
   objdump_command += ' | sed "s/^Disassembly of section/ fnc: Disassembly/g"'
   objdump_command += ' | sed "s/:$//g"'
@@ -278,7 +359,6 @@ def obj_to_asm(obj_filepath):
   objdump_command += ' | grep ":"'
   objdump_command += ' | sed "s/^[ \t]*//g"'
   objdump_command += " > {0}".format(asm_filepath)
-  # print(objdump_command)
   os.system(objdump_command)
   if not os.path.isfile(asm_filepath):
     print("ERROR: objdump failed")
@@ -290,7 +370,7 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
                                  expected_ins_per_iter=0.0, 
                                  func_name="", 
                                  avx512cd_required=False, 
-                                 num_conflicts_per_iteration = 1):
+                                 num_conflicts_per_iteration = 0):
   if not os.path.isfile(obj_filepath):
     print("ERROR: Cannot find file '" + obj_filepath + "'")
     sys.exit(-1)
@@ -300,6 +380,7 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
   asm_filepath = obj_to_asm(obj_filepath)
 
   asm_obj = AssemblyObject(asm_filepath, func_name)
+  asm_clean_filepath = asm_filepath+".clean"
 
   ## Extract labels:
   operations = asm_obj.operations
@@ -339,92 +420,113 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
         ## Serial remainder loops should be small
         continue
 
-      serial_remainder_loop_found = False
+      jmp_back = jump_op
 
-      ## Search backwards for another jump that closely bypasses 'jump_op'. 
+      ## Search backwards for another jump that closely bypasses 'jmp_back'. 
       ## To be the bypass jump, 2 conditions must be met:
-      ## 1 - Source position within 10 instructions before jump_op's target
-      ## 2 - Target position within 5 instructions of jump_op's position
+      ## 1 - Source position within 11 instructions before jmp_back's target
+      ## 2 - Target position within 6 instructions of jmp_back's position
       forward_bypass_jump_found = False
       forward_bypass_jump = None
-      threshold_pre=10
-      threshold_post=5
-      for i in range(jump_op.idx-1, jump_op.jump_target_idx-10, -1):
+      threshold_pre=11
+      threshold_post=6
+      for i in range(jmp_back.jump_target_idx, jmp_back.jump_target_idx-threshold_pre, -1):
         if i in jump_op_indices:
           jump_op2 = [j for j in jump_ops if j.idx==i][0]
 
-          if (jump_op.jump_target_idx > jump_op2.idx) and \
-             (jump_op.jump_target_idx - jump_op2.idx < threshold_pre) and \
-             (jump_op2.jump_target_idx > jump_op.idx) and \
-             (jump_op2.jump_target_idx - jump_op.idx < threshold_post):
+          if jump_op2.jump_target_idx < jump_op2.idx:
+            # Another backward jump preceding 'jmp_back' rules it out as 
+            # being a serial remainder loop
+            break
+
+          jmp_forward = jump_op2
+
+          if (jmp_back.jump_target_idx > jmp_forward.idx) and \
+             ((jmp_back.jump_target_idx - jmp_forward.idx) < threshold_pre) and \
+             (jmp_forward.jump_target_idx > jmp_back.idx) and \
+             ((jmp_forward.jump_target_idx - jmp_back.idx) < threshold_post):
              ## This is the forward bypass jump: 
              forward_bypass_jump_found = True
-             forward_bypass_jump = jump_op2
+             forward_bypass_jump = jmp_forward
              break
           else:
-            ## Any other type of jump immediately rules out 'jump_op' as being 
+            ## Any other type of jump immediately rules out 'jmp_back' as being 
             ## a serial remainder loop
             break
 
       if not forward_bypass_jump_found:
         continue
 
-      ## Now to confirm that serial remainder loop has been found, look for 
-      ## the kortest instruction that should closely precede the jump back:
-      kortest_found = False
-      for i in range(forward_bypass_jump.jump_target_idx-1, forward_bypass_jump.jump_target_idx-5, -1):
+      ## Look for a kortest instruction that should closely precede the jump back:
+      inner_kortest_found = False
+      for i in range(jmp_back.idx-1, jmp_back.idx-5, -1):
         op = operations[i]
         if "kortest" in op.instruction:
-          kortest_found = True
+          inner_kortest_found = True
+          break
+      ## Look for a kortest instruction that should precede the bypass jump:
+      outer_kortest_found = False
+      for i in range(forward_bypass_jump.idx-1, 0, -1):
+        if i in jump_op_indices:
+          ## End search
+          break
+        op = operations[i]
+        if "kortest" in op.instruction:
+          outer_kortest_found = True
           break
 
-      serial_remainder_loop_found = forward_bypass_jump_found and kortest_found
+      serial_remainder_loop_found = forward_bypass_jump_found and inner_kortest_found and outer_kortest_found
 
       if serial_remainder_loop_found:
-        jump_ops.remove(jump_op)
-        jump_op_indices.remove(jump_op.idx)
-        jump_target_label_indices.remove(jump_op.jump_target_idx)
-        ## Next, find the bypass jump that surrounds loop:
-        found_bypass = False
-        for jump_op2 in jump_ops:
-          if ((jump_op2.jump_target_idx-jump_op.idx) < 5) and (jump_op2.jump_target_idx > jump_op.idx):
-            ## Found it
-            found_bypass = True
-            jump_ops.remove(jump_op2)
-            jump_op_indices.remove(jump_op2.idx)
-            jump_target_label_indices.remove(jump_op2.jump_target_idx)
-            break
-        if not found_bypass:
-          print("ERROR: Did not find bypass jump for AVX-512-CD jump:")
-          print(jump_op)
-          sys.exit(-1)
+        jump_ops.remove(jmp_back)
+        jump_op_indices.remove(jmp_back.idx)
+        jump_target_label_indices.remove(jmp_back.jump_target_idx)
+        ## UPDATE: I already have forward bypass jump:
+        jump_ops.remove(forward_bypass_jump)
+        jump_op_indices.remove(forward_bypass_jump.idx)
+        jump_target_label_indices.remove(forward_bypass_jump.jump_target_idx)
 
-        avx512_conflict_loops.append(jump_op)
+        avx512_conflict_loops.append(jmp_back)
+
+  avx512_conflict_loops = list(avx512_conflict_loops)
+  avx512_conflict_loops.sort(key=lambda j: j.idx)
 
   n = len(avx512_conflict_loops)
   if n==0 and avx512_used and avx512cd_required:
-    print("AVX512 used and conflict detection required but no conflict detection loops found.")
+    print("AVX512 used and AVX-512-CD required but no AVX-512-CD loops found.")
+    print(obj_filepath)
     sys.exit(-1)
   if n!=0 and avx512_used and not avx512cd_required:
-    print("AVX512 used nd conflict detection not required but conflict detection loops were found.")
+    print("AVX512 used and AVX-512-CD not required but {0} AVX-512-CD loops were found.".format(n))
+    print(obj_filepath)
     sys.exit(-1)
   if n%num_conflicts_per_iteration != 0:
-    print("Number of detected AVX512 conflict loops not a multiple of {0}: {1}".format(num_conflicts_per_iteration, n))
+    print("ERROR: Number of detected AVX-512-CD loops not a multiple of {0}: {1}".format(num_conflicts_per_iteration, n))
+    print(obj_filepath)
+    for l in avx512_conflict_loops:
+      print(l)
     sys.exit(-1)
-  if avx512_used:
-    print("{0}x avx512_conflict_loops".format(n))
 
   jump_ops = list(jump_ops)
   jump_ops.sort(key=lambda j: j.idx)
 
-  loop_len_threshold = 5
+  ## Update: ignore 'ja' instruction that closely follows a sqrt. GCC is adding these, 
+  ##         I guess error detection.
+  jump_ops_within_loop_pruned = []
+  num_jumps_discarded = 0
+  for j in jump_ops:
+    discard_jump = False
+    if j.instruction == "ja":
+      for i in range(j.idx, j.idx-2, -1):
+        if "sqrt" in operations[i].instruction:
+          discard_jump = True
+          num_jumps_discarded += 1
+          break
+    if not discard_jump:
+      jump_ops_within_loop_pruned.append(j)
+  jump_ops = jump_ops_within_loop_pruned
 
-  # ## added for GCC compatibility?
-  # ## New method for setting loop length threshold: 50% of biggest jump:
-  # jump_distances = [abs(j.idx - j.jump_target_idx) for j in jump_ops]
-  # jump_distances.sort(reverse=True)
-  # loop_len_threshold = jump_distances[0] / 2;
-  # print("loop_len_threshold = {0}".format(loop_len_threshold))
+  loop_len_threshold = 5
 
   ## Identify backward jumps that follow a compare
   loop_jump_ops = Set()
@@ -448,27 +550,6 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
   loop_jump_ops = list(loop_jump_ops)
   loop_jump_ops.sort(key=lambda j: (j.idx+j.jump_target_idx)/2)
 
-  # print("{0} backward jumps found".format(len(loop_jump_ops)))
-  # for l in loop_jump_ops:
-  #   print(l)
-  # quit()
-
-  # ## Identify forward jumps (added for GCC compatibility?):
-  # forward_jumps = []
-  # for jump_op in jump_ops:
-  #   if jump_op.idx < label_to_idx[jump_op.operands[0]]:
-  #     forward_jumps.append(jump_op)
-  # if len(forward_jumps) > 0:
-  #   print("{0} forward_jumps".format(len(forward_jumps)))
-  #   print("forward_jumps:")
-  #   for o in forward_jumps:
-  #     # print(o)
-  #     # print("  Jumps to line idx {0}".format(o.jump_target_idx))
-  #     # print("  Loop length is {0} instructions.".format(o.idx - o.jump_target_idx + 1))
-  #     print("  {0} -> {1} ({2} instructions)".format(o.idx, o.jump_target_idx, o.jump_target_idx-o.idx+1))
-  #     # print("")
-  # quit()
-
   ## Next identify unbroken instruction sequences within these loops:
   jump_target_label_indices_sorted = list(jump_target_label_indices)
   jump_target_label_indices_sorted.sort()
@@ -482,10 +563,6 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
     loop_end_idx = loop_jump_op.idx
 
     jump_ops_within_loop = [j for j in jump_ops if (j.idx > loop_start_idx and j.idx < loop_end_idx and j.jump_target_idx > loop_start_idx and j.jump_target_idx < loop_end_idx)]
-    # if len(jump_ops_within_loop) > 0:
-    #   print("Jump ops within loop:")
-    #   for j in jump_ops_within_loop:
-    #     print(j)
 
     ## I notice that with AVX-512 there are many tiny forward jumps that bypass division instructions.
     ## Discard them:
@@ -505,22 +582,12 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
         jump_ops_within_loop_pruned.append(j)
     jump_ops_within_loop = jump_ops_within_loop_pruned
 
-    # interruption_indices = [j.idx for j in jump_ops_within_loop] + [j.jump_target_idx for j in jump_ops_within_loop]
     interruption_indices = Set()
-
-    # exit_points = [j.idx for j in jump_ops if (j.idx > loop_start_idx and j.idx < loop_end_idx)]
-    # for i in exit_points:
-    #   interruption_indices.add(i+1)
-
-    # entry_points = [j.jump_target_idx for j in jump_ops if (j.jump_target_idx >= loop_start_idx and j.jump_target_idx <= loop_end_idx)]
-    # entry_points = [j.jump_target_idx for j in jump_ops if (j.idx > loop_start_idx and j.idx < loop_end_idx and j.jump_target_idx > loop_start_idx and j.jump_target_idx < loop_end_idx)]
 
     ## Find forward jumps that launch and land within the backward jump 'loop_jump_op', with the condition 
     ## that the quantity of instructions remaining outside of the 'forward bypass' is sufficient for a
     ## compute loop:
     entry_points = []
-    # for j in jump_ops:
-    #   if j.idx > loop_start_idx and j.idx < loop_end_idx and j.jump_target_idx > loop_start_idx and j.jump_target_idx < loop_end_idx:
     for j in jump_ops_within_loop:
       if j.idx > j.jump_target_idx:
         ## j is a backward jump, so target is an 'entry point'
@@ -539,9 +606,6 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
 
     interruption_indices = list(interruption_indices)
     interruption_indices.sort()
-
-    # print("interruption_indices:")
-    # pprint(interruption_indices)
 
     sequences = Set()
     if len(interruption_indices)==0:
@@ -590,121 +654,108 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
   ## Select the loop that agrees with measurement of runtime measurement of #instructions:
   loop = None
 
-  ## TODO: Filter out loops that do not increment loop ctr
-  for i in range(len(loops)-1, -1, -1):
-    l = loops[i]
-    # print(" Analysing loop:")
-    # print(" " + l.__str__())
+  if len(loops) > 1:
+    for i in range(len(loops)-1, -1, -1):
+      l = loops[i]
+      # print(" Analysing loop:")
+      # print(" " + l.__str__())
 
-    if operations[l.end].instruction[0] != "j":
-      ## If this loop candidate does not end with a jump instruction, then 
-      ## it probably is not the compute loop.
-      del loops[i]
-      continue
-
-    ## Find the loop counter variable:
-    cmp_op = None
-    for j in range(l.end, -1, -1):
-      op = operations[j]
-      if op.instruction == "cmp":
-        cmp_op = op
-        break
-
-    if cmp_op == None:
-      print("ERROR: Failed to find cmp for loop: ")
-      print(l)
-      sys.exit(-1)
-
-    ## Find add operation that adds a scalar to one of the cmp operands:
-    ctr_name = ""
-    for j in range(l.end, -1, -1):
-      op = operations[j]
-      if op.instruction == "inc":
-        if op.operands[0] == cmp_op.operands[0]:
-          ctr_name = cmp_op.operands[0]
-        elif op.operands[0] == cmp_op.operands[1]:
-          ctr_name = cmp_op.operands[1]
-      elif op.instruction == "add" and op.operands[0][0:3] == "$0x":
-        if op.operands[1] == cmp_op.operands[0]:
-          ctr_name = cmp_op.operands[0]
-        elif op.operands[1] == cmp_op.operands[1]:
-          ctr_name = cmp_op.operands[1]
-
-      if ctr_name != "":
-        # print("  Loop ctr '{0}' found on line {1}".format(ctr_name, j))
-        break
-
-    if ctr_name == "":
-      # print("ERROR: Failed to find ctr_name for loop: ")
-      # print(l)
-      # sys.exit(-1)
-      print("WARNING: Failed to find ctr_name for loop: ")
-      l.unroll_factor = 1
-      print(l)
-      continue
-
-    # print("  ctr_name = {0}".format(ctr_name))
-
-    ## Determine what value is added to the ctr on each iteration:
-    ctr_step = 0
-    for j in range(l.end, l.start-1, -1):
-      op = operations[j]
-      if op.instruction == "inc" and op.operands[0] == ctr_name:
-        # ctr_step = 1
-        # break
-        ## Update: loop ctr can be incremented multiple times (for SIMD)
-        ctr_step += 1
-      elif "add" in op.instruction and op.operands[1] == ctr_name:
-        # ctr_step = int(op.operands[0].replace('$',''), 0)
-        # break
-        ## Update: loop ctr can be incremented multiple times (for SIMD)
-        if op.operands[0][0] == '$':
-          ctr_step += int(op.operands[0].replace('$',''), 0)
-    if ctr_step == 0:
-      # print("  Failed to find loop ctr inc/add, discarding as a 'main loop' candidate:")
-      del loops[i]
-      continue
-    else:
-      # if job_profile["compiler"] == "intel":
-      #   ## Intel compiler maintains two loop counters. One is incremented and solely 
-      #   ## used for bound check. The other is used for edge-array access.
-      #   pass
-      # elif job_profile["compiler"] == "gnu":
-      #   ## GNU compiler maintains one loop counter. Used both for bound check and edge-array access.
-      #   # int_bytes = 4
-      #   # double_bytes = 8
-      #   # edge_element_size_bytes = (3*double_bytes) + (2*int_bytes)
-      #   # if (ctr_step % edge_element_size_bytes) != 0:
-      #   #   print("ERROR: ctr_step \% edge_element_size_bytes != 0")
-      #   #   print("       ctr_step = {0}".format(ctr_step))
-      #   #   print("       edge_element_size_bytes = {0}".format(edge_element_size_bytes))
-      #   #   sys.exit(-1)
-      #   # ctr_step /= edge_element_size_bytes
-      #   ## The above logic is specific to MG-CFD loop, so not generically-applicable.
-      #   pass
-      # elif job_profile["compiler"] == "cray":
-      #   pass
-      # else:
-      #   print("ERROR: Do not know how compiler '{0}' implemented loop-bound-check.".format(job_profile["compiler"]))
-      #   sys.exit(-1)
-      ## Tentative update: No longer need to perform the above check.
-
-      if ctr_step < job_profile["SIMD len"]:
-        ## This cannot be the main loop as it is not vectorised at requested width.
-        # print("  ctr_step={0} < simd_len={1}, so cannot be main loop.".format(ctr_step, job_profile["SIMD len"]))
+      if operations[l.end].instruction[0] != "j":
+        ## If this loop candidate does not end with a jump instruction, then 
+        ## it is unlikely to be the compute loop.
         del loops[i]
+        continue
+
+      ## Find the loop counter variable:
+      cmp_op = None
+      for j in range(l.end, -1, -1):
+        op = operations[j]
+        if op.instruction == "cmp":
+          cmp_op = op
+          break
+      if cmp_op == None:
+        print("ERROR: Failed to find 'cmp' for loop: ")
+        print(l)
+        sys.exit(-1)
+
+      ## Find 'add' operation that adds a scalar to one of the cmp operands, use 
+      ## that to determine which 'cmp' operand is the counter:
+      ctr_name = ""
+      for j in range(l.end, -1, -1):
+        op = operations[j]
+        if op.instruction == "inc":
+          if op.operands[0] == cmp_op.operands[0]:
+            ctr_name = cmp_op.operands[0]
+          elif op.operands[0] == cmp_op.operands[1]:
+            ctr_name = cmp_op.operands[1]
+        elif op.instruction == "add" and op.operands[0][0:3] == "$0x":
+          if op.operands[1] == cmp_op.operands[0]:
+            ctr_name = cmp_op.operands[0]
+          elif op.operands[1] == cmp_op.operands[1]:
+            ctr_name = cmp_op.operands[1]
+
+        if ctr_name != "":
+          # print("  Loop ctr '{0}' found on line {1}".format(ctr_name, j))
+          break
+
+      if ctr_name == "":
+        l.unroll_factor = 1
+        # print("WARNING: Failed to find ctr_name for loop: ")
+        # print(l)
+        # print(obj_filepath)
+        continue
+
+      # print("  ctr_name = {0}".format(ctr_name))
+
+      ## Determine what value is added to the ctr on each iteration:
+      ctr_step = 0
+      for j in range(l.end, l.start-1, -1):
+        op = operations[j]
+        if op.instruction == "inc" and op.operands[0] == ctr_name:
+          ctr_step += 1
+        elif "add" in op.instruction and op.operands[1] == ctr_name:
+          if op.operands[0][0] == '$':
+            ctr_step += int(op.operands[0].replace('$',''), 0)
+      if ctr_step == 0:
+        # print("  Failed to find loop ctr inc/add, discarding as a 'main loop' candidate:")
+        del loops[i]
+        continue
       else:
+        if job_profile["compiler"] == "intel":
+          ## Intel compiler maintains two loop counters. One is incremented and solely 
+          ## used for bound check. The other is used for edge-array access.
+          pass
+        elif job_profile["compiler"] == "gnu":
+          ## GNU compiler maintains one loop counter. Used both for bound check and edge-array access 
+          ## so it counts bytes, not array elements as Intel does. This makes determining whether 
+          ## unrolling occured more difficult.
+          int_bytes = 4
+          double_bytes = 8
+          edge_element_size_bytes = (3*double_bytes) + (2*int_bytes)
+          if (ctr_step % edge_element_size_bytes) == 0:
+            ctr_step /= edge_element_size_bytes
+          else:
+            # print("ERROR: ctr_step \% edge_element_size_bytes != 0")
+            # print("       ctr_step = {0}".format(ctr_step))
+            # print("       edge_element_size_bytes = {0}".format(edge_element_size_bytes))
+            # sys.exit(-1)
+            pass
+          # ## NOTE: The above logic is specific to MG-CFD loop, so not generically-applicable.
+          # pass
+
+        # if ctr_step < job_profile["SIMD len"]:
+        #   ## This cannot be the main loop as it is not vectorised at requested width.
+        #   # print("  ctr_step={0} < simd_len={1}, so cannot be main loop.".format(ctr_step, job_profile["SIMD len"]))
+        #   del loops[i]
+        # else:
+        ## Update: my loop counter detection is flawed, do not delete loop
         l.ctr_step = ctr_step
-        # print("  ctr_step = {0}".format(ctr_step))
 
         if ctr_step > job_profile["SIMD len"]:
           unroll_factor = ctr_step / job_profile["SIMD len"]
         else:
           unroll_factor = 1
-        # print("  unroll_factor: {0}".format(unroll_factor))
         l.unroll_factor = unroll_factor
-
-  # print("{0} loop candidates".format(len(loops)))
 
   if len(loops) == 0:
     print("ERROR: No 'main loop' candidates left.")
@@ -719,12 +770,6 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
       loop = feasible_loops[0]
     elif len(feasible_loops) > 1:
       print("{0} loops detected".format(len(loops)))
-      # print("multiple loops found that meet length requirements:")
-      # for l in feasible_loops:
-      #   print(l)
-      # sys.exit(-1)
-      # ## Meh, just pick one.
-      # loop = feasible_loops[0]
 
     if loop == None:
       if avx512_used:
@@ -772,16 +817,75 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
               print("ERROR: {0} main loop candidates detected, unsure which to use".format(len(loops)))
 
   if loop == None:
+    ## I have discovered that my 'loop unrolling' detection is imperfect, maybe 
+    ## the target loop is unknowingly unrolled:
+    candidate_unroll_factors = [2, 4]
+    for u in candidate_unroll_factors:
+      unrolled_loop_candidates = []
+      for l in loops:
+        ll = float(l.end-l.start+1)
+        if abs((ll/u)-expected_ins_per_iter) < 0.2:
+          unrolled_loop_candidates.append(l)
+      if len(unrolled_loop_candidates) == 1:
+        l = unrolled_loop_candidates[0]
+        print(" detected one loop that if unrolled matches expected_ins_per_iter:")
+        l.unroll_factor = u
+        l.print_loop_detailed()
+        print(" selecting this loop")
+        loop = l
+        break
+
+  if loop == None:
+    ## Apply several heuristics to guess which of the detected loop is the target loop:
+    print("Could not find main compute loop, applying heuristics to: {0}".format(asm_filepath))
+
+  if loop == None and expected_ins_per_iter != 0.0:
+    ## If any of the loops match expected_ins_per_iter then select the first:
+    for l in loops:
+      ll = float(l.end-l.start+1)
+      if abs(ll-expected_ins_per_iter) < 0.2:
+        loop = l
+        break
+
+  if loop == None and expected_ins_per_iter != 0.0 and job_profile["SIMD len"] > 1:
+    ## Maybe user requested compiler to vectorise the loop, but was not possible
+    failed_simd_loop_candidates = []
+    for l in loops:
+      ll = float(l.end-l.start+1)
+      if int(ll) == int(expected_ins_per_iter / job_profile["SIMD len"]):
+        failed_simd_loop_candidates.append(l)
+    if len(failed_simd_loop_candidates) == 1:
+      l = failed_simd_loop_candidates[0]
+      print(" detected one loop that would be generated if requested SIMD failed:")
+      l.print_loop_detailed()
+      print(" selecting this loop")
+      loop = l
+
+  if loop == None and expected_ins_per_iter == 0.0:
+    ## Maybe I can make an intelligent guess of the main loop:
+    min_l = min([l.end-l.start+1 for l in loops])
+    max_l = max([l.end-l.start+1 for l in loops])
+    if float(max_l-min_l)/float(min_l) < 0.06:
+      ## All detected loops are similar size, probably slightly 
+      ## different compiler-generated loops of the same source-code 
+      ## loop. Pick the largest loop, as this typically is the main 
+      ## compute loop:
+      for l in loops:
+        if (l.end-l.start+1) == max_l:
+          loop = l
+          break
+
+  if loop == None:
     if func_name != "":
-      print("ERROR: Failed to find main loop for function '{0}'".format(func_name))
+      print("ERROR: Failed to find main loop for function '{0}' in: {1}".format(func_name, asm_clean_filepath))
     else:
-      print("ERROR: Failed to find main loop")
+      print("ERROR: Failed to find main loop in: {0}".format(asm_clean_filepath))
     if expected_ins_per_iter > 0.0:
-      print("  Expected a loop of {0} instructions".format(round(expected_ins_per_iter, 2)))
+      print(" Expected a loop of {0} instructions".format(round(expected_ins_per_iter, 2)))
     print(" Detected these loops:")
     for l_id in range(len(loops)):
       l = loops[l_id]
-      print(" - {0} ( unroll = {1}, ctr step = {2} )".format(l.__str__(), l.unroll_factor, l.ctr_step))
+      l.print_loop_detailed()
       assembly_loop_filepath = asm_filepath + ".loop" + str(l_id)
       with open(assembly_loop_filepath, "w") as assembly_loop_out:
         loop_start = loops[l_id].start
@@ -791,7 +895,8 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
           # assembly_loop_out.write(op.operation + "\n")
           assembly_loop_out.write(op.label + ": " + op.operation + "\n")
       print("   - written to {1}".format(l_id, assembly_loop_filepath))
-    sys.exit(-1)
+    print("")
+    raise Exception("Failed to analyse assembly")
 
   loop_start = loop.start
   loop_end   = loop.end
@@ -803,8 +908,10 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
 
   return loop, assembly_loop_filepath
 
-def count_loop_instructions(asm_loop_filepath, loop):
+def count_loop_instructions(asm_loop_filepath, loop=None):
   operations = []
+  # if not loop is None:
+  #   print("Extracting lines {0} -> {1} from file {2}".format(loop.start, loop.end, asm_loop_filepath))
   with open(asm_loop_filepath) as assembly:
     line_num = 0
     idx = -1
@@ -812,6 +919,13 @@ def count_loop_instructions(asm_loop_filepath, loop):
       line_num += 1
       line = line.replace('\n', '')
       idx += 1
+
+      if not loop is None:
+        if idx < loop.start:
+          continue
+        if idx > loop.end:
+          break
+
       operation = AssemblyOperation(line, "", line_num, idx)
       operations.append(operation)
 
@@ -820,7 +934,9 @@ def count_loop_instructions(asm_loop_filepath, loop):
   arith_counts = {}
   loop_count = 0
   load_count = 0
+  load_spill_count = 0
   store_count = 0
+  store_spill_count = 0
   insn_counts = {}
 
   def increment_count(a, i):
@@ -833,7 +949,9 @@ def count_loop_instructions(asm_loop_filepath, loop):
 
   for op in operations:
     n_stores = 0
+    n_store_spills = 0
     n_loads = 0
+    n_load_spills = 0
     if op.operands != None:
       ## Look for memory loads and stores
       if not "lea" in op.instruction:
@@ -842,11 +960,23 @@ def count_loop_instructions(asm_loop_filepath, loop):
         l = len(op.operands)
         if l > 1:
           if address_access_rgx.match(op.operands[-1]):
-            n_stores = 1
+            if "," in op.operands[-1]:
+              # An offset present implies this load is performing an array lookup
+              n_stores += 1
+            else:
+              # No offset implies that this load is not accessing an array, which I assume 
+              # to mean the store is of a register spill
+              n_store_spills += 1
           for operand in op.operands[0:(l-1)]:
             if address_access_rgx.match(operand) and not "floatpacket" in operand:
               ## 'floatpacket' refers to a constant held in memory
-              n_loads += 1
+              if "," in operand:
+                # An offset present implies this load is performing an array lookup
+                n_loads += 1
+              else:
+                # No offset implies that this load is not accessing an array, which I assume 
+                # to mean the load is of a previously-spilled register value.
+                n_load_spills += 1
 
     ## Handle aliases:
     if op.instruction=="xchg" and len(op.operands)==2 and op.operands[0]=="%ax" and op.operands[0]==op.operands[1]:
@@ -858,22 +988,38 @@ def count_loop_instructions(asm_loop_filepath, loop):
     increment_count(insn_counts, op.instruction)
 
     load_count += n_loads
+    load_spill_count += n_load_spills
     store_count += n_stores
+    store_spill_count += n_store_spills
 
-  if loop.unroll_factor > 1:
+  # Allow for faulty spill detection:
+  if load_count == 0 and load_spill_count > 0:
+    # All memory loads mis-identified as spills:
+    load_count = load_spill_count
+    load_spill_count = 0
+  if store_count == 0 and store_spill_count > 0:
+    # All memory stores mis-identified as spills:
+    store_count = store_spill_count
+    store_spill_count = 0
+
+  if (not loop is None) and loop.unroll_factor > 1:
     ## For modelling, need to know instruction counts per non-unrolled iteration:
     for k in insn_counts.keys():
       insn_counts[k] /= float(loop.unroll_factor)
 
     ## Also scale down loads and stores:
     load_count /= float(loop.unroll_factor)
+    load_spill_count /= float(loop.unroll_factor)
     store_count /= float(loop.unroll_factor)
+    store_spill_count /= float(loop.unroll_factor)
 
   loop_stats = {}
   for k in insn_counts.keys():
     loop_stats[k] = insn_counts[k]
 
   loop_stats["LOADS"] = load_count
+  loop_stats["LOAD_SPILLS"] = load_spill_count
   loop_stats["STORES"] = store_count
+  loop_stats["STORE_SPILLS"] = store_spill_count
 
   return loop_stats
