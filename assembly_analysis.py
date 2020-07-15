@@ -848,6 +848,37 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
         break
 
   if loop == None:
+    if len(loops) > 1 and "serial write loop" in compile_info and compile_info["serial write loop"]:
+      ## One of these loops should be much smaller (no register spills) and be mostly memory read/write:
+      write_loop_idx = None
+      write_loop_stats = None
+      for l_idx in reversed(range(len(loops))):
+        ls = count_loop_instructions(asm_clean_filepath, loops[l_idx])
+        print(ls)
+        if (ls["STORE_SPILLS"]+ls["STORES"]) == 10 and (ls["LOAD_SPILLS"]+ls["LOADS"]) > 20:
+          if write_loop_idx is None:
+            write_loop_idx = l_idx
+            write_loop_stats = ls
+          else:
+            if ls["lea"] != write_loop_stats["lea"]:
+              ## Select the loop performing most 'lea' instructions:
+              if ls["lea"] > write_loop_stats["lea"]:
+                write_loop_idx = l_idx
+                write_loop_stats = ls
+            else:
+              raise Exception("Heuristic for identifying manual-write-loop needs refinement (found multiple)")
+      if not write_loop_idx is None:
+        write_loop_length = 0
+        for k in write_loop_stats:
+          if not "STORE" in k and not "LOAD" in k:
+            write_loop_length += write_loop_stats[k]
+        write_loop_num_insn_executed = compile_info["SIMD len"] * write_loop_length
+        expected_ins_per_iter -= write_loop_num_insn_executed
+        print("Removing manual-write-loop (write_loop_num_insn_executed={0}):".format(write_loop_num_insn_executed))
+        print(write_loop_stats)
+        del loops[write_loop_idx]
+
+  if loop == None:
     ## Apply several heuristics to guess which of the detected loop is the target loop:
     print("Could not find main compute loop, applying heuristics to: {0}".format(asm_filepath))
 
