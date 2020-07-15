@@ -34,7 +34,7 @@ class Loop(object):
       s = "ROOT"
     else:
       l = self.total_length
-      s = " "*indent + "Lines {0} -> {1} ({2})".format(self.start+1, self.end+1, l)
+      s = " "*indent + "Lines {0} -> {1} ({2}) ; SIMD len = {3}".format(self.start+1, self.end+1, l, self.simd_len)
     for il in self.inner_loops:
       s += "\n" + il.print_loop(indent+1)
     return s
