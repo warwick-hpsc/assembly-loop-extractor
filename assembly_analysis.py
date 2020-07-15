@@ -26,6 +26,8 @@ class Loop(object):
     self.ctr_step = -1
     self.unroll_factor = -1
 
+    self.simd_len = -1
+
   def print_loop(self, indent):
     s = ""
     if self.isroot:
@@ -640,7 +642,9 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
         sequences.add((a, b, l))
 
     for s in sequences:
-      loops.add(Loop(s[0], s[1]))
+      l = Loop(s[0], s[1])
+      l.simd_len = compile_info["SIMD len"]
+      loops.add(l)
 
   loops = list(loops)
 
