@@ -895,7 +895,7 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
     failed_simd_loop_candidates = []
     for l in loops:
       ll = float(l.end-l.start+1)
-      if int(ll) == int(expected_ins_per_iter / compile_info["SIMD len"]):
+      if abs(int(expected_ins_per_iter / compile_info["SIMD len"]) - ll) <= 1:
         failed_simd_loop_candidates.append(l)
     if len(failed_simd_loop_candidates) == 1:
       l = failed_simd_loop_candidates[0]
@@ -903,6 +903,37 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
       l.print_loop_detailed()
       print(" selecting this loop")
       loop = l
+      loop.simd_len = 1
+    elif len(failed_simd_loop_candidates) > 1:
+      ## Maybe the contents of each loop candidates are near identical:
+      loop_stats = None
+      loops_identical = True
+      for l in failed_simd_loop_candidates:
+        ls = count_loop_instructions(asm_clean_filepath, l)
+        ls["LOADS"] += ls["LOAD_SPILLS"]
+        ls["LOAD_SPILLS"] = 0
+        ls["STORES"] += ls["STORE_SPILLS"]
+        ls["STORE_SPILLS"] = 0
+        if loop_stats is None:
+          loop_stats = ls
+        else:
+          if ls != loop_stats:
+            ## This loop is different to previous, so cannot be sure 
+            ## which is main compute loop
+            ### ... unless difference is small
+            ls_count = sum([v for v in ls.values()])
+            loop_stats_count = sum([v for v in loop_stats.values()])
+            diff = abs(loop_stats_count - ls_count)
+            diff_pct = float(diff) / float(ls_count)
+            if diff_pct > 0.01:
+              loops_identical = False
+              break
+      if loops_identical:
+        print(" detected multiple identical loops that would be generated if requested SIMD failed:")
+        l = failed_simd_loop_candidates[0]
+        print(" selecting this loop")
+        loop = l
+        loop.simd_len = 1
 
   if loop == None and expected_ins_per_iter == 0.0:
     ## Maybe I can make an intelligent guess of the main loop:
