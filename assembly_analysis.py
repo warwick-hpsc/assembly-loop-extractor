@@ -934,6 +934,10 @@ def count_loop_instructions(asm_loop_filepath, loop=None):
         if idx > loop.end:
           break
 
+      if ':' in line:
+        line = ':'.join(line.split(':')[1:])
+        line = re.sub(r"^[ \t]*", "", line)
+
       operation = AssemblyOperation(line, "", line_num, idx)
       operations.append(operation)
 
@@ -1010,16 +1014,17 @@ def count_loop_instructions(asm_loop_filepath, loop=None):
     store_count = store_spill_count
     store_spill_count = 0
 
-  if (not loop is None) and loop.unroll_factor > 1:
-    ## For modelling, need to know instruction counts per non-unrolled iteration:
-    for k in insn_counts.keys():
-      insn_counts[k] /= float(loop.unroll_factor)
+  # if (not loop is None) and loop.unroll_factor > 1:
+  #   ## For modelling, need to know instruction counts per non-unrolled iteration:
+  #   for k in insn_counts.keys():
+  #     insn_counts[k] /= float(loop.unroll_factor)
 
-    ## Also scale down loads and stores:
-    load_count /= float(loop.unroll_factor)
-    load_spill_count /= float(loop.unroll_factor)
-    store_count /= float(loop.unroll_factor)
-    store_spill_count /= float(loop.unroll_factor)
+  #   ## Also scale down loads and stores:
+  #   load_count /= float(loop.unroll_factor)
+  #   load_spill_count /= float(loop.unroll_factor)
+  #   store_count /= float(loop.unroll_factor)
+  #   store_spill_count /= float(loop.unroll_factor)
+  loop_stats["unroll_factor"] = loop.unroll_factor
 
   loop_stats = {}
   for k in insn_counts.keys():
