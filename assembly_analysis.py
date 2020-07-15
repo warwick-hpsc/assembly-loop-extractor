@@ -509,7 +509,7 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
     print("AVX512 used and AVX-512-CD not required but {0} AVX-512-CD loops were found.".format(n))
     print(obj_filepath)
     sys.exit(-1)
-  if n%num_conflicts_per_iteration != 0:
+  if num_conflicts_per_iteration > 0 and n%num_conflicts_per_iteration != 0:
     print("ERROR: Number of detected AVX-512-CD loops not a multiple of {0}: {1}".format(num_conflicts_per_iteration, n))
     print(obj_filepath)
     for l in avx512_conflict_loops:
