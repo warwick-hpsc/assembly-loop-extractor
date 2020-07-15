@@ -373,7 +373,7 @@ def obj_to_asm(obj_filepath):
 
   return asm_filepath
 
-def extract_loop_kernel_from_obj(obj_filepath, job_profile, 
+def extract_loop_kernel_from_obj(obj_filepath, compile_info, 
                                  expected_ins_per_iter=0.0, 
                                  func_name="", 
                                  avx512cd_required=False, 
@@ -728,11 +728,11 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
         del loops[i]
         continue
       else:
-        if job_profile["compiler"] == "intel":
+        if compile_info["compiler"] == "intel":
           ## Intel compiler maintains two loop counters. One is incremented and solely 
           ## used for bound check. The other is used for edge-array access.
           pass
-        elif job_profile["compiler"] == "gnu":
+        elif compile_info["compiler"] == "gnu":
           ## GNU compiler maintains one loop counter. Used both for bound check and edge-array access 
           ## so it counts bytes, not array elements as Intel does. This makes determining whether 
           ## unrolling occured more difficult.
@@ -751,16 +751,16 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
           # ## NOTE: The above logic is specific to MG-CFD loop, so not generically-applicable.
           # pass
 
-        # if ctr_step < job_profile["SIMD len"]:
+        # if ctr_step < compile_info["SIMD len"]:
         #   ## This cannot be the main loop as it is not vectorised at requested width.
-        #   # print("  ctr_step={0} < simd_len={1}, so cannot be main loop.".format(ctr_step, job_profile["SIMD len"]))
+        #   # print("  ctr_step={0} < simd_len={1}, so cannot be main loop.".format(ctr_step, compile_info["SIMD len"]))
         #   del loops[i]
         # else:
         ## Update: my loop counter detection is flawed, do not delete loop
         l.ctr_step = ctr_step
 
-        if ctr_step > job_profile["SIMD len"]:
-          unroll_factor = ctr_step / job_profile["SIMD len"]
+        if ctr_step > compile_info["SIMD len"]:
+          unroll_factor = ctr_step / compile_info["SIMD len"]
         else:
           unroll_factor = 1
         l.unroll_factor = unroll_factor
@@ -855,12 +855,12 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
         loop = l
         break
 
-  if loop == None and expected_ins_per_iter != 0.0 and job_profile["SIMD len"] > 1:
+  if loop == None and expected_ins_per_iter != 0.0 and compile_info["SIMD len"] > 1:
     ## Maybe user requested compiler to vectorise the loop, but was not possible
     failed_simd_loop_candidates = []
     for l in loops:
       ll = float(l.end-l.start+1)
-      if int(ll) == int(expected_ins_per_iter / job_profile["SIMD len"]):
+      if int(ll) == int(expected_ins_per_iter / compile_info["SIMD len"]):
         failed_simd_loop_candidates.append(l)
     if len(failed_simd_loop_candidates) == 1:
       l = failed_simd_loop_candidates[0]
@@ -900,7 +900,6 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
         loop_end   = loops[l_id].end
         for i in range(loop_start, loop_end+1):
           op = operations[i]
-          # assembly_loop_out.write(op.operation + "\n")
           assembly_loop_out.write(op.label + ": " + op.operation + "\n")
       print("   - written to {1}".format(l_id, assembly_loop_filepath))
     print("")
