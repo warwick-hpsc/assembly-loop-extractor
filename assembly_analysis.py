@@ -61,6 +61,13 @@ class Loop(object):
   def __eq__(self, other):
     return (isinstance(other, Loop) and self.start == other.start and self.end == other.end)
 
+def instruction_is_jump(insn):
+  if insn[0] == 'j':
+    return True
+  elif insn in ["b.ge", "b.gt", "b.le", "b.lt"]:
+    return True
+  return False
+
 def clean_asm_file(asm_filepath, func_name=""):
   asm_clean_filepath = asm_filepath + ".clean"
 
@@ -300,7 +307,7 @@ class AssemblyObject(object):
     self.jump_target_label_indices = Set()
     for i in range(len(self.operations)):
       op = self.operations[i]
-      if op.instruction[0] == "j":
+      if instruction_is_jump(op.instruction):
         if ((i+1)*2) == self.asm_clean_numLines:
           ## Ignore jump on final line.
           continue
@@ -660,7 +667,7 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
       # print(" Analysing loop:")
       # print(" " + l.__str__())
 
-      if operations[l.end].instruction[0] != "j":
+      if not instruction_is_jump(operations[l.end].instruction):
         ## If this loop candidate does not end with a jump instruction, then 
         ## it is unlikely to be the compute loop.
         del loops[i]
