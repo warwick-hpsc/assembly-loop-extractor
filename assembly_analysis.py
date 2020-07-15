@@ -61,6 +61,13 @@ class Loop(object):
   def __eq__(self, other):
     return (isinstance(other, Loop) and self.start == other.start and self.end == other.end)
 
+def instruction_is_jump(insn):
+  if insn[0] == 'j':
+    return True
+  elif insn in ["b.ge", "b.gt", "b.le", "b.lt"]:
+    return True
+  return False
+
 def clean_asm_file(asm_filepath, func_name=""):
   asm_clean_filepath = asm_filepath + ".clean"
 
@@ -300,7 +307,7 @@ class AssemblyObject(object):
     self.jump_target_label_indices = Set()
     for i in range(len(self.operations)):
       op = self.operations[i]
-      if op.instruction[0] == "j":
+      if instruction_is_jump(op.instruction):
         if ((i+1)*2) == self.asm_clean_numLines:
           ## Ignore jump on final line.
           continue
@@ -366,7 +373,7 @@ def obj_to_asm(obj_filepath):
 
   return asm_filepath
 
-def extract_loop_kernel_from_obj(obj_filepath, job_profile, 
+def extract_loop_kernel_from_obj(obj_filepath, compile_info, 
                                  expected_ins_per_iter=0.0, 
                                  func_name="", 
                                  avx512cd_required=False, 
@@ -660,7 +667,7 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
       # print(" Analysing loop:")
       # print(" " + l.__str__())
 
-      if operations[l.end].instruction[0] != "j":
+      if not instruction_is_jump(operations[l.end].instruction):
         ## If this loop candidate does not end with a jump instruction, then 
         ## it is unlikely to be the compute loop.
         del loops[i]
@@ -721,17 +728,18 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
         del loops[i]
         continue
       else:
-        if job_profile["compiler"] == "intel":
+        if compile_info["compiler"] == "intel":
           ## Intel compiler maintains two loop counters. One is incremented and solely 
           ## used for bound check. The other is used for edge-array access.
           pass
-        elif job_profile["compiler"] == "gnu":
+        elif compile_info["compiler"] == "gnu":
           ## GNU compiler maintains one loop counter. Used both for bound check and edge-array access 
           ## so it counts bytes, not array elements as Intel does. This makes determining whether 
           ## unrolling occured more difficult.
           int_bytes = 4
+          long_bytes = 8
           double_bytes = 8
-          edge_element_size_bytes = (3*double_bytes) + (2*int_bytes)
+          edge_element_size_bytes = (3*double_bytes) + (2*long_bytes)
           if (ctr_step % edge_element_size_bytes) == 0:
             ctr_step /= edge_element_size_bytes
           else:
@@ -743,16 +751,16 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
           # ## NOTE: The above logic is specific to MG-CFD loop, so not generically-applicable.
           # pass
 
-        # if ctr_step < job_profile["SIMD len"]:
+        # if ctr_step < compile_info["SIMD len"]:
         #   ## This cannot be the main loop as it is not vectorised at requested width.
-        #   # print("  ctr_step={0} < simd_len={1}, so cannot be main loop.".format(ctr_step, job_profile["SIMD len"]))
+        #   # print("  ctr_step={0} < simd_len={1}, so cannot be main loop.".format(ctr_step, compile_info["SIMD len"]))
         #   del loops[i]
         # else:
         ## Update: my loop counter detection is flawed, do not delete loop
         l.ctr_step = ctr_step
 
-        if ctr_step > job_profile["SIMD len"]:
-          unroll_factor = ctr_step / job_profile["SIMD len"]
+        if ctr_step > compile_info["SIMD len"]:
+          unroll_factor = ctr_step / compile_info["SIMD len"]
         else:
           unroll_factor = 1
         l.unroll_factor = unroll_factor
@@ -847,12 +855,12 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
         loop = l
         break
 
-  if loop == None and expected_ins_per_iter != 0.0 and job_profile["SIMD len"] > 1:
+  if loop == None and expected_ins_per_iter != 0.0 and compile_info["SIMD len"] > 1:
     ## Maybe user requested compiler to vectorise the loop, but was not possible
     failed_simd_loop_candidates = []
     for l in loops:
       ll = float(l.end-l.start+1)
-      if int(ll) == int(expected_ins_per_iter / job_profile["SIMD len"]):
+      if int(ll) == int(expected_ins_per_iter / compile_info["SIMD len"]):
         failed_simd_loop_candidates.append(l)
     if len(failed_simd_loop_candidates) == 1:
       l = failed_simd_loop_candidates[0]
@@ -892,7 +900,6 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
         loop_end   = loops[l_id].end
         for i in range(loop_start, loop_end+1):
           op = operations[i]
-          # assembly_loop_out.write(op.operation + "\n")
           assembly_loop_out.write(op.label + ": " + op.operation + "\n")
       print("   - written to {1}".format(l_id, assembly_loop_filepath))
     print("")
@@ -925,6 +932,10 @@ def count_loop_instructions(asm_loop_filepath, loop=None):
           continue
         if idx > loop.end:
           break
+
+      if ':' in line:
+        line = ':'.join(line.split(':')[1:])
+        line = re.sub(r"^[ \t]*", "", line)
 
       operation = AssemblyOperation(line, "", line_num, idx)
       operations.append(operation)
@@ -1002,16 +1013,17 @@ def count_loop_instructions(asm_loop_filepath, loop=None):
     store_count = store_spill_count
     store_spill_count = 0
 
-  if (not loop is None) and loop.unroll_factor > 1:
-    ## For modelling, need to know instruction counts per non-unrolled iteration:
-    for k in insn_counts.keys():
-      insn_counts[k] /= float(loop.unroll_factor)
+  # if (not loop is None) and loop.unroll_factor > 1:
+  #   ## For modelling, need to know instruction counts per non-unrolled iteration:
+  #   for k in insn_counts.keys():
+  #     insn_counts[k] /= float(loop.unroll_factor)
 
-    ## Also scale down loads and stores:
-    load_count /= float(loop.unroll_factor)
-    load_spill_count /= float(loop.unroll_factor)
-    store_count /= float(loop.unroll_factor)
-    store_spill_count /= float(loop.unroll_factor)
+  #   ## Also scale down loads and stores:
+  #   load_count /= float(loop.unroll_factor)
+  #   load_spill_count /= float(loop.unroll_factor)
+  #   store_count /= float(loop.unroll_factor)
+  #   store_spill_count /= float(loop.unroll_factor)
+  loop_stats["unroll_factor"] = loop.unroll_factor
 
   loop_stats = {}
   for k in insn_counts.keys():
