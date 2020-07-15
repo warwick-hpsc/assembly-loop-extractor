@@ -737,8 +737,9 @@ def extract_loop_kernel_from_obj(obj_filepath, job_profile,
           ## so it counts bytes, not array elements as Intel does. This makes determining whether 
           ## unrolling occured more difficult.
           int_bytes = 4
+          long_bytes = 8
           double_bytes = 8
-          edge_element_size_bytes = (3*double_bytes) + (2*int_bytes)
+          edge_element_size_bytes = (3*double_bytes) + (2*long_bytes)
           if (ctr_step % edge_element_size_bytes) == 0:
             ctr_step /= edge_element_size_bytes
           else:
