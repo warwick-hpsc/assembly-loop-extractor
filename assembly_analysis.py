@@ -849,17 +849,10 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
     if compile_info["compiler"] == "clang" and expected_ins_per_iter > 0.0:
       ## Finally, adjust for likely alignment issues with Clang,
       ## leading to it inserting two serial loop iterations:
-      manual_simd_block_width = 512
-      # manual_simd_block_width = 256
-      # manual_simd_block_width = 128
-      # manual_simd_block_width = 64
-      # manual_simd_block_width = 32
-      # manual_simd_block_width = 16
       simd_len = compile_info["SIMD len"]
+      manual_simd_block_width = compile_info["manual CA block width"]
       simd_iters = (manual_simd_block_width-2) / simd_len
       serial_iters = manual_simd_block_width - (simd_iters*simd_len)
-      # simd_iters = (float(manual_simd_block_width)-1.6) / float(simd_len)
-      # serial_iters = float(manual_simd_block_width) - (simd_iters*float(simd_len))
       if verbose:
         print("simd_len = {0}".format(simd_len))
         print("simd_iters = {0}, serial_iters = {1}".format(simd_iters, serial_iters))
