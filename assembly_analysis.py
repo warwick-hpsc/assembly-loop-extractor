@@ -792,10 +792,7 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
           print(" removing scatter loop: " + serial_scatter_loop.__str__())
         del loops[scatter_loop_idx]
         if expected_ins_per_iter > 0.0:
-          scatter_loop_length = 0
-          for k in scatter_loop_stats:
-            if not "STORE" in k and not "LOAD" in k:
-              scatter_loop_length += scatter_loop_stats[k]
+          scatter_loop_length = serial_scatter_loop.end - serial_scatter_loop.start + 1
           if compile_info["SIMD failed"]:
             scatter_loop_num_insn_executed_per_iter = scatter_loop_length
           else:
@@ -809,8 +806,10 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
       gather_loop_stats = None
       for l_idx in range(len(loops)):
         ls = count_loop_instructions(asm_clean_filepath, loops[l_idx])
-        l_stores = (ls["STORES"]+ls["STORE_SPILLS"])
-        l_loads = (ls["LOADS"]+ls["LOAD_SPILLS"])
+        # l_stores = (ls["STORES"]+ls["STORE_SPILLS"])
+        # l_loads = (ls["LOADS"]+ls["LOAD_SPILLS"])
+        l_stores = ls["STORES"]
+        l_loads = ls["LOADS"]
         l_is_gather = (l_stores >= NVAR*2) and (l_stores < NVAR*3)
         l_is_gather = l_is_gather and (l_loads >= NVAR*2) and (l_loads < NVAR*3)
         if l_is_gather:
@@ -835,10 +834,7 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
           print(" removing gather loop: " + serial_gather_loop.__str__())
         del loops[gather_loop_idx]
         if expected_ins_per_iter > 0.0:
-          gather_loop_length = 0
-          for k in gather_loop_stats:
-            if not "STORE" in k and not "LOAD" in k:
-              gather_loop_length += gather_loop_stats[k]
+          gather_loop_length = serial_gather_loop.end - serial_gather_loop.start + 1
           if compile_info["SIMD failed"]:
             gather_loop_num_insn_executed_per_iter = gather_loop_length
           else:
@@ -846,27 +842,17 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
           expected_ins_per_iter -= gather_loop_num_insn_executed_per_iter
           if verbose:
             print(" expected ins/iter is now {0}".format(expected_ins_per_iter))
-    if compile_info["compiler"] == "clang" and expected_ins_per_iter > 0.0:
-      ## Finally, adjust for likely alignment issues with Clang,
-      ## leading to it inserting two serial loop iterations:
-      simd_len = compile_info["SIMD len"]
-      manual_simd_block_width = compile_info["manual CA block width"]
-      simd_iters = (manual_simd_block_width-2) / simd_len
-      serial_iters = manual_simd_block_width - (simd_iters*simd_len)
-      if verbose:
-        print("simd_len = {0}".format(simd_len))
-        print("simd_iters = {0}, serial_iters = {1}".format(simd_iters, serial_iters))
-        print("adjustment = {0}".format(float(simd_iters) / float(simd_iters+serial_iters)))
-      expected_ins_per_iter *= float(simd_iters) / float(simd_iters+serial_iters)
-      if verbose:
-        print("expected ins/iter after adjusting for mis-alignment is {0}".format(expected_ins_per_iter))
+    ## Adjust for nested loops needing small number of 'admin' instructions outside:
+    nested_loop_admin_instructions = 6
+    expected_ins_per_iter -= float(nested_loop_admin_instructions)
 
-      ## Also adjust for nested loop needing more instructions outside it:
-      nested_loop_admin_instructions = 18 + 19 + 8 + 9
-      nested_loop_admin_instructions_per_iter = float(nested_loop_admin_instructions) / float(simd_iters + serial_iters)
-      expected_ins_per_iter -= nested_loop_admin_instructions_per_iter
-      if verbose:
-        print("expected ins/iter after adjusting for nested loop is {0}".format(expected_ins_per_iter))
+    ## Exclude any loops not inbetween gather and scatter:
+    start = min(gather_loop.end,   scatter_loop.end)
+    end   = max(gather_loop.start, scatter_loop.start)
+    for i in range(len(loops)-1, -1, -1):
+      l = loops[i]
+      if l.start < start or l.end > end:
+        del loops[i]
 
   loops.sort(key=lambda l: l.start)
 
