@@ -797,10 +797,7 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
           print(" removing scatter loop: " + serial_scatter_loop.__str__())
         del loops[scatter_loop_idx]
         if expected_ins_per_iter > 0.0:
-          scatter_loop_length = 0
-          for k in scatter_loop_stats:
-            if not "STORE" in k and not "LOAD" in k:
-              scatter_loop_length += scatter_loop_stats[k]
+          scatter_loop_length = serial_scatter_loop.end - serial_scatter_loop.start + 1
           if compile_info["SIMD failed"]:
             scatter_loop_num_insn_executed_per_iter = scatter_loop_length
           else:
@@ -843,10 +840,7 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
           print(" removing gather loop: " + serial_gather_loop.__str__())
         del loops[gather_loop_idx]
         if expected_ins_per_iter > 0.0:
-          gather_loop_length = 0
-          for k in gather_loop_stats:
-            if not "STORE" in k and not "LOAD" in k:
-              gather_loop_length += gather_loop_stats[k]
+          gather_loop_length = serial_gather_loop.end - serial_gather_loop.start + 1
           if compile_info["SIMD failed"]:
             gather_loop_num_insn_executed_per_iter = gather_loop_length
           else:
@@ -854,6 +848,17 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
           expected_ins_per_iter -= gather_loop_num_insn_executed_per_iter
           if verbose:
             print(" expected ins/iter is now {0:.2f}".format(expected_ins_per_iter))
+    ## Adjust for nested loops needing small number of 'admin' instructions outside:
+    nested_loop_admin_instructions = 6
+    expected_ins_per_iter -= float(nested_loop_admin_instructions)
+
+    ## Exclude any loops not inbetween gather and scatter:
+    start = min(gather_loop.end,   scatter_loop.end)
+    end   = max(gather_loop.start, scatter_loop.start)
+    for i in range(len(loops)-1, -1, -1):
+      l = loops[i]
+      if l.start < start or l.end > end:
+        del loops[i]
 
   loops.sort(key=lambda l: l.start)
 

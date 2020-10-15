@@ -38,7 +38,7 @@ vbroadcasti64x4,avx512,
 vextracti64x[248],avx512,
 vfixupimm[sp]d,avx512,Agner Fog claims insn decodes to ports 0+1 or 0+5
 vfpclasspd,avx512,
-vmovdqu(32|64),avx512,
+vmovdq[au](32|64),avx512,
 vpblendmq,avx512,
 vpbroadcast[bwdq],avx512,
 vpbroadcastm[bw]2[qd],avx512,
