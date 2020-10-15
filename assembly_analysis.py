@@ -832,7 +832,7 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
               gather_loop_idx = l_idx
               gather_loop_stats = ls
       if gather_loop_idx is None:
-        raise Exception("Failed to identify gather loop")
+        pass
       else:
         ## Remove loop, and reduce expected ins/iter:
         serial_gather_loop = loops[gather_loop_idx]
@@ -852,13 +852,14 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
     nested_loop_admin_instructions = 6
     expected_ins_per_iter -= float(nested_loop_admin_instructions)
 
-    ## Exclude any loops not inbetween gather and scatter:
-    start = min(gather_loop.end,   scatter_loop.end)
-    end   = max(gather_loop.start, scatter_loop.start)
-    for i in range(len(loops)-1, -1, -1):
-      l = loops[i]
-      if l.start < start or l.end > end:
-        del loops[i]
+    if not gather_loop_idx is None:
+      ## Exclude any loops not inbetween gather and scatter:
+      start = min(gather_loop.end,   scatter_loop.end)
+      end   = max(gather_loop.start, scatter_loop.start)
+      for i in range(len(loops)-1, -1, -1):
+        l = loops[i]
+        if l.start < start or l.end > end:
+          del loops[i]
 
   loops.sort(key=lambda l: l.start)
 
@@ -1162,6 +1163,7 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
         failed_simd_loop_candidates.append(l)
     if len(failed_simd_loop_candidates) == 1:
       l = failed_simd_loop_candidates[0]
+      l.simd_len = 1
       print(" detected one loop that would be generated if requested SIMD failed:")
       l.print_loop_detailed()
       print(" selecting this loop")
