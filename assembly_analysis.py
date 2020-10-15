@@ -20,6 +20,7 @@ jump_label_obj_rgx = re.compile("^[0-9a-z]+$")
 noise_rgx = re.compile("^[\.]+[a-zA-Z]")
 
 NVAR=5
+NDIM=3
 
 verbose = False
 # verbose = True
@@ -33,10 +34,9 @@ class Loop(object):
     self.inner_loops = []
     self.isroot = isroot
 
-    self.ctr_step = -1
-    self.unroll_factor = -1
-
-    self.simd_len = -1
+    self.ctr_step = 1
+    self.unroll_factor = 1
+    self.simd_len = 1
 
   def print_loop(self, indent):
     s = ""
@@ -407,7 +407,7 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
     sys.exit(-1)
 
   if verbose:
-    print("Analysing '{0}' for loop of length {1}".format(obj_filepath, expected_ins_per_iter))
+    print("Analysing '{0}' for loop of length {1:.2f}".format(obj_filepath, expected_ins_per_iter))
 
   simd_len_requested = compile_info["SIMD len"]
   if compile_info["SIMD failed"]:
@@ -575,7 +575,6 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
       if jump_op.instruction in ["jb", "jmp"]:
         ## Is a non-conditional jump
         loop_jump_ops.add(jump_op)
-        break
       ## Seach backwards from 'jump_op' for a compare:
       for i in range(jump_idx-1, jump_target_idx-1, -1):
         if i in jump_op_indices:
@@ -612,14 +611,14 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
   for loop_jump_op in loop_jump_ops:
     # if verbose:
     #   print("")
-    #   print("Processing loop {0} -> {1}.".format(loop_jump_op.jump_target_idx, loop_jump_op.idx))
+    #   print("Scanning loop {0} -> {1}.".format(loop_jump_op.jump_target_idx, loop_jump_op.idx))
     #   print(loop_jump_op.__str__())
 
     loop_start_idx = loop_jump_op.jump_target_idx
     loop_end_idx = loop_jump_op.idx
 
     jump_ops_within_loop = [j for j in jump_ops if (j.idx >= loop_start_idx and \
-                                                    j.idx <= loop_end_idx and \
+                                                    j.idx < loop_end_idx and \
                                                     j.jump_target_idx >= loop_start_idx and \
                                                     j.jump_target_idx <= loop_end_idx)]
 
@@ -728,9 +727,13 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
       if l > loop_len_threshold:
         sequences.add((a, b, l))
 
+    seq_list = []
+    for s in sequences:
+      seq_list.append(s)
+    seq_list.sort(key=lambda s: s[0])
     if verbose:
       print("  contains {0} sequences:".format(len(sequences)))
-    for s in sequences:
+    for s in seq_list:
       l = Loop(s[0], s[1])
       if verbose:
         print("  - " + l.__str__())
@@ -767,9 +770,11 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
         ls = count_loop_instructions(asm_clean_filepath, loops[l_idx])
         l_stores = (ls["STORES"]+ls["STORE_SPILLS"])
         l_loads = (ls["LOADS"]+ls["LOAD_SPILLS"])
-        # l_is_scatter = (l_stores >= NVAR*2) and (l_stores < NVAR*3)
-        l_is_scatter = (l_stores >= NVAR*4) and (l_stores < NVAR*5)
-        l_is_scatter = l_is_scatter and (l_loads >= NVAR*4) and (l_loads < NVAR*5)
+        # if verbose:
+        #     print("loop at {0}: loads={1}, stores={2}".format(loops[l_idx].start, l_loads, l_stores))
+        expected_loads = NVAR*2 + NVAR*2 + 2 ## 10x variables, 10x fluxes, 2x node ids
+        expected_stores = NVAR*2 + NVAR*2  ## 10x fluxes, 10x zeroing
+        l_is_scatter = abs(l_loads - expected_loads) <= 1 and abs(l_stores - expected_stores) <= 1
         if l_is_scatter:
           if scatter_loop_idx is None:
             scatter_loop = loops[l_idx]
@@ -802,7 +807,7 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
             scatter_loop_num_insn_executed_per_iter = scatter_loop_length * simd_len_requested
           expected_ins_per_iter -= scatter_loop_num_insn_executed_per_iter
           if verbose:
-            print(" expected ins/iter is now {0}".format(expected_ins_per_iter))
+            print(" expected ins/iter is now {0:.2f}".format(expected_ins_per_iter))
     if "gather loop present" in compile_info and compile_info["gather loop present"]:
       ## One of these loops should be much smaller (no register spills) and be mostly memory read/write:
       gather_loop_idx = None
@@ -811,8 +816,11 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
         ls = count_loop_instructions(asm_clean_filepath, loops[l_idx])
         l_stores = (ls["STORES"]+ls["STORE_SPILLS"])
         l_loads = (ls["LOADS"]+ls["LOAD_SPILLS"])
-        l_is_gather = (l_stores >= NVAR*2) and (l_stores < NVAR*3)
-        l_is_gather = l_is_gather and (l_loads >= NVAR*2) and (l_loads < NVAR*3)
+        expected_loads = NVAR*2 + NDIM + 2 ## 10x variables, 3D edge vector, 2x node ids
+        expected_stores = NVAR*2 + NDIM ## 10x variables, 3D edge vector
+        # if verbose:
+        #     print("loop at {0}: loads={1}, stores={2}".format(loops[l_idx].start, l_loads, l_stores))
+        l_is_gather = abs(l_loads - expected_loads) <= 1 and abs(l_stores - expected_stores) <= 1
         if l_is_gather:
           if gather_loop_idx is None:
             gather_loop = loops[l_idx]
@@ -845,28 +853,7 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
             gather_loop_num_insn_executed_per_iter = gather_loop_length * simd_len_requested
           expected_ins_per_iter -= gather_loop_num_insn_executed_per_iter
           if verbose:
-            print(" expected ins/iter is now {0}".format(expected_ins_per_iter))
-    if compile_info["compiler"] == "clang" and expected_ins_per_iter > 0.0:
-      ## Finally, adjust for likely alignment issues with Clang,
-      ## leading to it inserting two serial loop iterations:
-      simd_len = compile_info["SIMD len"]
-      manual_simd_block_width = compile_info["manual CA block width"]
-      simd_iters = (manual_simd_block_width-2) / simd_len
-      serial_iters = manual_simd_block_width - (simd_iters*simd_len)
-      if verbose:
-        print("simd_len = {0}".format(simd_len))
-        print("simd_iters = {0}, serial_iters = {1}".format(simd_iters, serial_iters))
-        print("adjustment = {0}".format(float(simd_iters) / float(simd_iters+serial_iters)))
-      expected_ins_per_iter *= float(simd_iters) / float(simd_iters+serial_iters)
-      if verbose:
-        print("expected ins/iter after adjusting for mis-alignment is {0}".format(expected_ins_per_iter))
-
-      ## Also adjust for nested loop needing more instructions outside it:
-      nested_loop_admin_instructions = 18 + 19 + 8 + 9
-      nested_loop_admin_instructions_per_iter = float(nested_loop_admin_instructions) / float(simd_iters + serial_iters)
-      expected_ins_per_iter -= nested_loop_admin_instructions_per_iter
-      if verbose:
-        print("expected ins/iter after adjusting for nested loop is {0}".format(expected_ins_per_iter))
+            print(" expected ins/iter is now {0:.2f}".format(expected_ins_per_iter))
 
   loops.sort(key=lambda l: l.start)
 
@@ -1138,7 +1125,7 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
             simd_close_match = l
         if not simd_close_match is None:
           if verbose:
-            print("found a closely matching SIMD loop: " + close_match_loop.__str__())
+            print("found a closely matching SIMD loop: " + simd_close_match.__str__())
           close_match_loop = simd_close_match
 
       if close_match_loop is None:
@@ -1226,7 +1213,7 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
     else:
       print("ERROR: Failed to identify primary compute loop in: {0}".format(asm_clean_filepath))
     if expected_ins_per_iter > 0.0:
-      print(" Expected a loop of {0} instructions".format(round(expected_ins_per_iter, 2)))
+      print(" Expected a loop of {0:.2f} instructions".format(expected_ins_per_iter))
     print(" Detected these loops:")
     for l_id in range(len(loops)):
       l = loops[l_id]
