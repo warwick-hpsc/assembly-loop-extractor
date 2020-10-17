@@ -46,6 +46,7 @@ vpcmpeqq,avx512,
 vpcmplt[dq],avx512,
 vpcmpneqq,avx512,
 vpconflict[dq],avx512,
+vpmov(wb|db|qb|dw|qw|qd),avx512
 vperm[it]2[wdq],avx512,
 vperm[it]2pd,avx512,
 vplzcnt[dq],avx512,
