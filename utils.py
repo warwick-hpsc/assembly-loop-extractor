@@ -55,12 +55,12 @@ def map_insn_to_exec_unit(insn, mapping):
 
   for eu in exec_units:
     for eu_insn in mapping[eu]:
-      if re.match(eu_insn, insn):
+      if re.match("^"+eu_insn+"$", insn):
         return eu
 
   return ""
 
-def categorise_aggregated_instructions_tally(tally_filepath):
+def categorise_aggregated_instructions_tally_csv(tally_filepath):
   # print("Categorising aggregated instructions in file: " + tally_filepath)
 
   eu_mapping = load_insn_eu_mapping()
@@ -139,5 +139,50 @@ def categorise_aggregated_instructions_tally(tally_filepath):
         eu_tally.loc[f,"mem.store_spills"] = eu_tally.loc[f,"mem.stores"] - eu_tally.loc[f,"mem.stores.rw"]
         eu_tally.loc[f,"mem.stores"] = eu_tally.loc[f,"mem.stores.rw"]
         eu_tally = eu_tally.drop(columns=[c for c in eu_tally.columns if c.endswith(".rw")])
+
+  return eu_tally
+
+def categorise_aggregated_instructions_tally_dict(tally):
+  eu_mapping = load_insn_eu_mapping()
+  exec_units = eu_mapping.keys()
+  eu_classes = ["eu."+eu for eu in exec_units]
+
+  eu_tally = {}
+  for euc in eu_classes:
+    eu_tally[euc] = 0
+  eu_tally["mem.loads"] = 0
+  eu_tally["mem.stores"] = 0
+  eu_tally["mem.load_spills"] = 0
+  eu_tally["mem.store_spills"] = 0
+
+  for insn in tally.keys():
+    count = tally[insn]
+
+    insn = insn.lower()
+
+    if insn in ["unroll_factor"]:
+      continue
+
+    if insn == "loads":
+      eu_tally["mem.loads"] += count
+      continue
+    elif insn == "stores":
+      eu_tally["mem.stores"] += count
+      continue
+    elif insn == "load_spills":
+      eu_tally["mem.load_spills"] += count
+      continue
+    elif insn == "store_spills":
+      eu_tally["mem.store_spills"] += count
+      continue
+
+    eu = map_insn_to_exec_unit(insn, eu_mapping)
+    exec_unit_found = eu != ""
+    if not exec_unit_found:
+      raise UnknownInstruction(insn, count)
+    eu_tally["eu."+eu] += count
+
+  if "eu.DISCARD" in eu_tally.keys():
+    del eu_tally["eu.DISCARD"]
 
   return eu_tally
