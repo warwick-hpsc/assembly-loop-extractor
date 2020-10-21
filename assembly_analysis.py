@@ -656,10 +656,10 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
   jump_target_label_indices_sorted.sort()
   loops = Set()
   for loop_jump_op in loop_jump_ops:
-    # if verbose:
-    #   print("")
-    #   print("Scanning loop {0} -> {1}.".format(loop_jump_op.jump_target_idx, loop_jump_op.idx))
-    #   print(loop_jump_op.__str__())
+    if verbose:
+      print("")
+      print("Scanning loop {0} -> {1}.".format(loop_jump_op.jump_target_idx, loop_jump_op.idx))
+      # print(loop_jump_op.__str__())
 
     loop_start_idx = loop_jump_op.jump_target_idx
     loop_end_idx = loop_jump_op.idx
@@ -898,6 +898,8 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
     ## Adjust for nested loops needing small number of 'admin' instructions outside:
     nested_loop_admin_instructions = 6
     expected_ins_per_iter -= float(nested_loop_admin_instructions)
+    if verbose:
+      print(" deducted {0} admin instructions, expected ins/iter is now {1:.2f}".format(nested_loop_admin_instructions, expected_ins_per_iter))
 
     if not gather_loop_idx is None:
       ## Exclude any loops not inbetween gather and scatter:
@@ -913,12 +915,18 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
   ## Select the loop that agrees with measurement of runtime measurement of #instructions:
   loop = None
 
+  if verbose:
+    print("Detected these loops:")
+    for l in loops:
+      print(l)
+    print("")
+
   if len(loops) > 1:
     ## Attempt to infer if each loop was unrolled, and how much by:
     for i in range(len(loops)-1, -1, -1):
       l = loops[i]
-      # print(" Analysing loop:")
-      # print(" " + l.__str__())
+      if verbose:
+        print(" Analysing loop for counter variable: " + l.__str__())
 
       # if not instruction_is_jump(operations[l.end].instruction):
       #   # ## If this loop candidate does not end with a jump instruction, then 
@@ -1027,7 +1035,9 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
               # print(op)
               ctr_step += num
       if ctr_step == 0:
-        # print("  Failed to find loop ctr inc/add, discarding as a 'main loop' candidate:")
+        if verbose:
+          print("  Failed to find loop ctr inc/add, discarding as a 'main loop' candidate:")
+          print("  > " + loops[i].__str__())
         del loops[i]
         continue
 
@@ -1180,6 +1190,9 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
     # close_loop_len = None
     close_matches = []
     for l in loops:
+      print("")
+      print("Applying close-match heuristic to loop:")
+      print("  " + l.__str__())
       loop_len = float(l.end-l.start+1)
       diff = expected_ins_per_iter - float(loop_len)
       diff_pct = abs(diff) / float(expected_ins_per_iter)
@@ -1392,8 +1405,6 @@ def count_loop_instructions(asm_loop_filepath, loop=None):
   global target_is_aarch64
 
   operations = []
-  if not loop is None:
-    print("Extracting line {0} -> {1} from file {2}".format(loop.start, loop.end, asm_loop_filepath))
   with open(asm_loop_filepath) as assembly:
     line_num = 0
     idx = -1
