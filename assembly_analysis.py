@@ -420,18 +420,24 @@ def obj_to_asm(obj_filepath):
   if os.path.isfile(asm_filepath):
     return asm_filepath
 
-  ## Extract raw assembly:
-  objdump_command = "objdump -d --no-show-raw-insn {0}".format(obj_filepath)
-  objdump_command += ' | sed "s/^Disassembly of section/ fnc: Disassembly/g"'
-  objdump_command += ' | sed "s/:$//g"'
-  objdump_command += ' | grep "^ "'
-  objdump_command += ' | grep ":"'
-  objdump_command += ' | sed "s/^[ \t]*//g"'
-  objdump_command += " > {0}".format(asm_filepath)
-  os.system(objdump_command)
-  if not os.path.isfile(asm_filepath):
-    print("ERROR: objdump failed")
-    sys.exit(-1)
+  if not os.path.isfile(raw_asm_filepath):
+    ## Extract assembly:
+    objdump_command = "objdump -d --no-show-raw-insn {0}".format(obj_filepath)
+    objdump_command += " > {0}".format(raw_asm_filepath)
+    os.system(objdump_command)
+    if not os.path.isfile(raw_asm_filepath):
+      print("ERROR: objdump failed")
+      sys.exit(-1)
+
+  ## Re-format assembly for easier parsing:
+  format_command = "cat {0}".format(raw_asm_filepath)
+  format_command += ' | sed "s/^Disassembly of section/ fnc: Disassembly/g"'
+  format_command += ' | sed "s/:$//g"'
+  format_command += ' | grep "^ "'
+  format_command += ' | grep ":"'
+  format_command += ' | sed "s/^[ \t]*//g"'
+  format_command += " > {0}".format(asm_filepath)
+  os.system(format_command)
 
   return asm_filepath
 
