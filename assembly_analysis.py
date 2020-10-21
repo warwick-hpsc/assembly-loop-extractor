@@ -1,8 +1,15 @@
 import os
 import re
-from sets import Set
 import copy
 import sys
+
+import sys
+if sys.version_info[0] == 2:
+  from sets import Set
+  pyv = 2
+elif sys.version_info[0] == 3:
+  Set = set
+  pyv = 3
 
 from pprint import pprint
 
@@ -312,8 +319,12 @@ class AssemblyObject(object):
     self.asm_clean_filepath = clean_asm_file_v2(asm_filepath, func_name)
 
     self.asm_clean_numLines = 0
-    for line in open(self.asm_clean_filepath).xreadlines():
-      self.asm_clean_numLines += 1
+    if pyv == 2:
+      for line in open(self.asm_clean_filepath).xreadlines():
+        self.asm_clean_numLines += 1
+    elif pyv == 2:
+      for line in open(self.asm_clean_filepath):
+        self.asm_clean_numLines += 1
 
     self.parse_asm()
     self.identify_jumps()

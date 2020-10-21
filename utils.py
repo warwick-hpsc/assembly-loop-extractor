@@ -1,6 +1,12 @@
 import pandas as pd
 import os, re
-from sets import Set
+
+import sys
+pyv = sys.version_info[0]
+if pyv == 2:
+  from sets import Set
+elif pyv == 3:
+  Set = set
 
 utils_script_dirpath = os.path.dirname(os.path.realpath(__file__))
 
