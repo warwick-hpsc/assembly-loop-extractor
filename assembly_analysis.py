@@ -47,7 +47,7 @@ class Loop(object):
       s = "ROOT"
     else:
       l = self.total_length
-      s = " "*indent + "Lines {0} -> {1} ({2}) ; SIMD len = {3}".format(self.start+1, self.end+1, l, self.simd_len)
+      s = " "*indent + "Lines {0} -> {1} ({2}) ; unroll = {3} ; SIMD len = {4}".format(self.start+1, self.end+1, l, self.unroll_factor, self.simd_len)
     for il in self.inner_loops:
       s += "\n" + il.print_loop(indent+1)
     return s
@@ -951,9 +951,13 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
         elif op.instruction == "inc":
           inc_op = op
       if cmp_op is None and dec_op is None and inc_op is None:
-        print("ERROR: Failed to find 'cmp' for loop: ")
-        print(l)
-        sys.exit(-1)
+        # print("ERROR: Failed to find 'cmp' for loop: ")
+        # print(l)
+        # sys.exit(-1)
+        print("WARNING: Failed to find 'cmp' for loop, setting unroll_factor to -1:")
+        print("         " + l.__str__())
+        l.unroll_factor = -1
+        continue
 
       ## Find add operation that adds a scalar to one of the cmp operands:
       ctr_name = ""
@@ -995,7 +999,7 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
           # print(l)
           # sys.exit(-1)
           print("WARNING: Failed to find ctr_name for loop: ")
-          l.unroll_factor = 1
+          l.unroll_factor = -1
           print(l)
         continue
 
@@ -1072,14 +1076,17 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
   else:
     loop = None
 
-    feasible_loops = []
+    perfect_match_loops = []
     for l in loops:
-      if expected_ins_per_iter <= 0.0 or ((l.end-l.start+1) == round(expected_ins_per_iter*l.unroll_factor)):
-        feasible_loops.append(l)
-    if len(feasible_loops) == 1:
-      loop = feasible_loops[0]
-    elif len(feasible_loops) > 1:
-      print("{0} loops detected".format(len(loops)))
+      if (l.unroll_factor!=-1) and ((l.end-l.start+1)==round(expected_ins_per_iter*l.unroll_factor)):
+        perfect_match_loops.append(l)
+      elif (l.unroll_factor == -1) and ((l.end-l.start+1)==round(expected_ins_per_iter)):
+        perfect_match_loops.append(l)
+    if len(perfect_match_loops) == 1:
+      loop = perfect_match_loops[0]
+      print("Found a perfectly-matching loop: " + loop.__str__())
+    elif len(perfect_match_loops) > 1:
+      print("{0} perfectly-matching loops detected".format(len(perfect_match_loops)))
 
     if loop == None:
       if avx512_used:
