@@ -19,7 +19,8 @@ jump_label_gnu_rgx = re.compile("^\.L[0-9]+:")
 jump_label_obj_rgx = re.compile("^[0-9a-z]+$")
 noise_rgx = re.compile("^[\.]+[a-zA-Z]")
 
-arm64_jump_insns = ["bl", "b.lt", "b.le", "b.gt", "b.ge"]
+target_is_aarch64 = False
+arm64_jump_insns = ["b", "bl", "b.lt", "b.le", "b.ne", "b.gt", "b.ge"]
 
 NVAR=5
 NDIM=3
@@ -260,6 +261,23 @@ class AssemblyOperation(object):
         self.instruction = "dec"
         self.operands = self.operands[1:]
 
+      if target_is_aarch64:
+        if self.instruction == "subs" and \
+           self.operands[0] == self.operands[1] and \
+           self.operands[2] == "#0x1":
+          # This is a decrement
+          self.instruction = "dec"
+          self.operands = [self.operands[1]]
+
+        # If each operand register begins with 'v', then instruction is NEON SIMD:
+        insn_is_ARM_NEON = len(self.operands) > 0
+        for op in self.operands:
+          if op[0] != 'v':
+            insn_is_ARM_NEON = False
+            break
+        if insn_is_ARM_NEON:
+          self.instruction = 'v'+self.instruction
+
   def __str__(self):
     s = "  Instruction: '" + self.instruction + "'"
     s += "\n"
@@ -388,7 +406,17 @@ def obj_to_asm(obj_filepath):
     print("ERROR: Cannot find file '" + obj_filepath + "'")
     sys.exit(-1)
 
+  global target_is_aarch64
+
   asm_filepath = obj_filepath + ".asm"
+  raw_asm_filepath = obj_filepath + ".raw-asm"
+
+  if os.path.isfile(raw_asm_filepath):
+    for line in open(raw_asm_filepath):
+      if "aarch64" in line:
+        target_is_aarch64 = True
+        break
+
   if os.path.isfile(asm_filepath):
     return asm_filepath
 
@@ -416,6 +444,9 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
     print("ERROR: Cannot find file '" + obj_filepath + "'")
     sys.exit(-1)
 
+  global target_is_aarch64
+  global verbose
+  
   if verbose:
     print("Analysing '{0}' for loop of length {1:.2f}".format(obj_filepath, expected_ins_per_iter))
 
@@ -889,17 +920,21 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
       #   l.unroll_factor = 1
       #   continue
       ends_with_jump = False
-      asm_is_arm64 = False
       if operations[l.end].instruction[0] == "j":
         ends_with_jump = True
       elif operations[l.end].instruction in arm64_jump_insns:
         ends_with_jump = True
-        asm_is_arm64 = True
       if not ends_with_jump:
         ## If this loop candidate does not end with a jump instruction, then 
         ## it probably is not the compute loop.
-        del loops[i]
-        continue
+        # print("deleting loop as it does not end with a jump:")
+        # print(loops[i])
+        # del loops[i]
+        # continue
+        ## Update: loop candidates can be simply an unbroken sequence, not necessary to 
+        ##         end with a jump. E.g., a SIMD loop followed by scatter loop, a
+        ##         smart compiler will not insert a jump at end of SIMD loop.
+        pass
 
       ## Find the loop counter variable:
       cmp_op = None
@@ -922,11 +957,12 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
 
       ## Find add operation that adds a scalar to one of the cmp operands:
       ctr_name = ""
-      if asm_is_arm64:
+      if target_is_aarch64:
         # ARM assembly does not increment loop counter as cleanly as for x86, 
         # so for now abort search for loop counter and hope it is not a problem 
         # for identifying ARM loops.
         l.unroll_factor = -1
+        continue
       else:
         if not dec_op is None:
           ## Easy, counter is the only operand:
@@ -1152,7 +1188,10 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
         close_match = True
       if close_match:
         loop_stats = count_loop_instructions(asm_clean_filepath, l)
-        loop_stats = categorise_aggregated_instructions_tally_dict(loop_stats)
+        if target_is_aarch64:
+          loop_stats = categorise_aggregated_instructions_tally_dict(loop_stats, is_aarch64=True)
+        else:
+          loop_stats = categorise_aggregated_instructions_tally_dict(loop_stats, is_intel64=True)
         num_simd_insn = 0
         for k in loop_stats:
           if "simd" in k.lower():
@@ -1337,6 +1376,8 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
   return assembly_loop_filepath
 
 def count_loop_instructions(asm_loop_filepath, loop=None):
+  global target_is_aarch64
+
   operations = []
   if not loop is None:
     print("Extracting line {0} -> {1} from file {2}".format(loop.start, loop.end, asm_loop_filepath))
@@ -1378,8 +1419,11 @@ def count_loop_instructions(asm_loop_filepath, loop=None):
     else:
       a[i] = 1
 
-  address_access_rgx = re.compile(".*\(.*\)")
-  address_access_rgx2 = re.compile(".*[.*]")
+  if target_is_aarch64:
+    address_access_rgx = re.compile("\[.*\]")
+  else:
+    address_access_rgx = re.compile(".*\(.*\)")
+    address_access_rgx2 = re.compile(".*[.*]")
 
   for op in operations:
     n_stores = 0
@@ -1388,29 +1432,52 @@ def count_loop_instructions(asm_loop_filepath, loop=None):
     n_load_spills = 0
     if op.operands != None:
       ## Look for memory loads and stores
-      if not "lea" in op.instruction:
-        ## Address operand of 'lea' instruction is not actually loaded.
-        ## AFAIK, 'lea' is the only exception.
-        l = len(op.operands)
-        if l > 1:
-          if address_access_rgx.match(op.operands[-1]):
-            if "," in op.operands[-1]:
-              # An offset present implies this load is performing an array lookup
+      if target_is_aarch64:
+        # if address_access_rgx.match(op.operands[-1]):
+        address_match = False
+        for operand in op.operands:
+          if address_access_rgx.match(operand):
+            address_match = True
+            break
+        if address_match:
+          ## Is load or store - which depends on instruction
+          if op.instruction.startswith("ld"):
+            n_loads += 1
+            if op.instruction == "ldp":
+              # Loads a pair, so increment again:
+              n_loads += 1
+          elif op.instruction.startswith("st"):
+            n_stores += 1
+            if op.instruction == "ldp":
+              # Stores a pair, so increment again:
               n_stores += 1
-            else:
-              # No offset implies that this load is not accessing an array, which I assume 
-              # to mean the store is of a register spill
-              n_store_spills += 1
-          for operand in op.operands[0:(l-1)]:
-            if not "floatpacket" in operand and (address_access_rgx.match(operand) or address_access_rgx2.match(operand)):
-              ## 'floatpacket' refers to a constant held in memory
-              if "," in operand:
+          else:
+            raise Exception("Unsure whether address lookup is for load or store: " + op.operation)
+      else:
+        ## Intel
+        if not "lea" in op.instruction:
+          ## Address operand of 'lea' instruction is not actually loaded.
+          ## AFAIK, 'lea' is the only exception.
+          l = len(op.operands)
+          if l > 1:
+            if address_access_rgx.match(op.operands[-1]):
+              if "," in op.operands[-1]:
                 # An offset present implies this load is performing an array lookup
-                n_loads += 1
+                n_stores += 1
               else:
                 # No offset implies that this load is not accessing an array, which I assume 
-                # to mean the load is of a previously-spilled register value.
-                n_load_spills += 1
+                # to mean the store is of a register spill
+                n_store_spills += 1
+            for operand in op.operands[0:(l-1)]:
+              if not "floatpacket" in operand and (address_access_rgx.match(operand) or address_access_rgx2.match(operand)):
+                ## 'floatpacket' refers to a constant held in memory
+                if "," in operand:
+                  # An offset present implies this load is performing an array lookup
+                  n_loads += 1
+                else:
+                  # No offset implies that this load is not accessing an array, which I assume 
+                  # to mean the load is of a previously-spilled register value.
+                  n_load_spills += 1
 
     ## Handle aliases:
     if op.instruction=="xchg" and len(op.operands)==2 and op.operands[0]=="%ax" and op.operands[0]==op.operands[1]:

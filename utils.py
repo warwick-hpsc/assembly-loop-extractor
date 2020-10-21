@@ -33,8 +33,13 @@ def safe_pd_filter(df, field, value):
     raise Exception("No rows left after filter: '{0}' == '{1}'".format(field, value))
   return df
 
-def load_insn_eu_mapping():
-  exec_unit_mapping_filepath = os.path.join(utils_script_dirpath, "insn_eu_mapping.csv")
+def load_insn_eu_mapping(is_aarch64=False, is_intel64=False):
+  if is_aarch64:
+    exec_unit_mapping_filepath = os.path.join(utils_script_dirpath, "ARM-instructions.csv")
+  elif is_intel64:
+    exec_unit_mapping_filepath = os.path.join(utils_script_dirpath, "Intel-instructions.csv")
+  else:
+    raise Exception("Specifc whether architecutre is AARCH64 or Intel64")
   df = pd.read_csv(exec_unit_mapping_filepath)
 
   exec_unit_mapping = {}
@@ -60,10 +65,16 @@ def map_insn_to_exec_unit(insn, mapping):
 
   return ""
 
-def categorise_aggregated_instructions_tally_csv(tally_filepath):
-  # print("Categorising aggregated instructions in file: " + tally_filepath)
+def categorise_aggregated_instructions_tally_csv(tally_filepath, is_aarch64=False, is_intel64=False):
+  print("Categorising aggregated instructions in file: " + tally_filepath)
 
-  eu_mapping = load_insn_eu_mapping()
+  if is_aarch64:
+    eu_mapping = load_insn_eu_mapping(is_aarch64=True)
+  elif is_intel64:
+    eu_mapping = load_insn_eu_mapping(is_intel64=True)
+  else:
+    eu_mapping = load_insn_eu_mapping()
+
   exec_units = eu_mapping.keys()
   eu_classes = ["eu."+eu for eu in exec_units]
 
@@ -81,7 +92,7 @@ def categorise_aggregated_instructions_tally_csv(tally_filepath):
   eu_tally["mem.store_spills"] = 0
 
   for insn_cn in insn_colnames:
-    insn = insn_cn.split('.')[1].lower()
+    insn = '.'.join(insn_cn.split('.')[1:]).lower()
     count = insn_tally[insn_cn]
 
     if insn == "loads":
@@ -142,8 +153,14 @@ def categorise_aggregated_instructions_tally_csv(tally_filepath):
 
   return eu_tally
 
-def categorise_aggregated_instructions_tally_dict(tally):
-  eu_mapping = load_insn_eu_mapping()
+def categorise_aggregated_instructions_tally_dict(tally, is_aarch64=False, is_intel64=False):
+  if is_aarch64:
+    eu_mapping = load_insn_eu_mapping(is_aarch64=True)
+  elif is_intel64:
+    eu_mapping = load_insn_eu_mapping(is_intel64=True)
+  else:
+    eu_mapping = load_insn_eu_mapping()
+
   exec_units = eu_mapping.keys()
   eu_classes = ["eu."+eu for eu in exec_units]
 
