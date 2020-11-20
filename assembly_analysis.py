@@ -1133,9 +1133,11 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
         perfect_match_loops.append(l)
     if len(perfect_match_loops) == 1:
       loop = perfect_match_loops[0]
-      print("Found a perfectly-matching loop: " + loop.__str__())
+      if verbose:
+        print("  found a perfectly-matching loop: " + loop.__str__())
     elif len(perfect_match_loops) > 1:
-      print("{0} perfectly-matching loops detected".format(len(perfect_match_loops)))
+      if verbose:
+        print("  {0} perfectly-matching loops detected".format(len(perfect_match_loops)))
 
     if loop == None:
       if avx512_used:
@@ -1223,9 +1225,10 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
     # close_loop_len = None
     close_matches = []
     for l in loops:
-      print("")
-      print("Applying close-match heuristic to loop:")
-      print("  " + l.__str__())
+      if verbose:
+        print("")
+        print("Applying close-match heuristic to loop:")
+        print("  " + l.__str__())
       loop_len = float(l.end-l.start+1)
       diff = expected_ins_per_iter - float(loop_len)
       diff_pct = abs(diff) / float(expected_ins_per_iter)
