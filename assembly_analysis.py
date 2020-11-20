@@ -928,7 +928,8 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
           if verbose:
             print(" expected ins/iter is now {0:.2f}".format(expected_ins_per_iter))
     ## Adjust for nested loops needing small number of 'admin' instructions outside:
-    nested_loop_admin_instructions = 6
+    # nested_loop_admin_instructions = 6
+    nested_loop_admin_instructions = 10
     expected_ins_per_iter -= float(nested_loop_admin_instructions)
     if verbose:
       print(" deducted {0} admin instructions, expected ins/iter is now {1:.2f}".format(nested_loop_admin_instructions, expected_ins_per_iter))
