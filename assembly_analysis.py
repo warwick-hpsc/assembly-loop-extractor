@@ -208,6 +208,24 @@ def clean_asm_file_v2(asm_filepath, func_name=""):
       func_lines = asm_lines[func_first_appearance:(func_last_appearance+1)]
     # print("Have extracted {0} lines".format(len(func_lines)))
 
+    # Possibility #3: kernel assembly is in a separate 'omp_outlined' section. Clang does this. 
+    # Hint will be if extracted assembly ends with a 'callq' instruction to an omp_outlined section:
+    if "callq" in func_lines[-2]:
+      omp_first_appearance = -1
+      omp_last_appearance = -1
+      i = -1
+      for line in asm_lines:
+        i+=1
+        if "<" in line and ".omp_outlined" in line:
+          if omp_first_appearance == -1:
+            omp_first_appearance = i
+          omp_last_appearance = i
+      if omp_last_appearance != -1 and omp_last_appearance > omp_first_appearance:
+        ## Use this block:
+        # Keep line after last appearance:
+        omp_last_appearance += 1
+        func_lines = asm_lines[omp_first_appearance:(omp_last_appearance+1)]
+
     # Now clean:
     func_lines_clean = []
     for line in func_lines:
@@ -495,6 +513,9 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
   jump_op_indices = asm_obj.jump_op_indices
   jump_target_labels = asm_obj.jump_target_labels
   jump_target_label_indices = asm_obj.jump_target_label_indices
+
+  if len(jump_ops) == 0:
+    raise Exception("No jumps found")
 
   ## Write another version of assembly, removing unused line labels:
   asm_obj.write_out_asm_simple()
