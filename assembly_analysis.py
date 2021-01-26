@@ -843,6 +843,10 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
     ## Remove gather and/or scatter loop
     if "scatter loop present" in compile_info and compile_info["scatter loop present"]:
       ## One of these loops should be much smaller (no register spills) and be mostly memory read/write:
+      expected_loads = NVAR*2 + NVAR*2 + 2 ## 10x variables, 10x fluxes, 2x node ids
+      expected_stores = NVAR*2 + NVAR*2  ## 10x fluxes, 10x zeroing
+      if verbose:
+        print("Scanning for scatter loop with {0} loads and {1} stores".format(expected_loads, expected_stores))
       scatter_loop_idx = None
       scatter_loop_stats = None
       for l_idx in range(len(loops)):
@@ -850,9 +854,7 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
         l_stores = (ls["STORES"]+ls["STORE_SPILLS"])
         l_loads = (ls["LOADS"]+ls["LOAD_SPILLS"])
         # if verbose:
-        #     print("loop at {0}: loads={1}, stores={2}".format(loops[l_idx].start, l_loads, l_stores))
-        expected_loads = NVAR*2 + NVAR*2 + 2 ## 10x variables, 10x fluxes, 2x node ids
-        expected_stores = NVAR*2 + NVAR*2  ## 10x fluxes, 10x zeroing
+        #     print(" loop at {0}: loads={1}, stores={2}".format(loops[l_idx].start, l_loads, l_stores))
         l_is_scatter = abs(l_loads - expected_loads) <= 1 and abs(l_stores - expected_stores) <= 1
         if l_is_scatter:
           if scatter_loop_idx is None:
@@ -886,16 +888,18 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
             print(" expected ins/iter is now {0:.2f}".format(expected_ins_per_iter))
     if "gather loop present" in compile_info and compile_info["gather loop present"]:
       ## One of these loops should be much smaller (no register spills) and be mostly memory read/write:
+      expected_loads = compile_info["gather loop numLoads"]
+      expected_stores = compile_info["gather loop numStores"]
+      if verbose:
+        print("Scanning for gather loop with {0} loads and {1} stores".format(expected_loads, expected_stores))
       gather_loop_idx = None
       gather_loop_stats = None
       for l_idx in range(len(loops)):
         ls = count_loop_instructions(asm_clean_filepath, loops[l_idx])
         l_stores = (ls["STORES"]+ls["STORE_SPILLS"])
         l_loads = (ls["LOADS"]+ls["LOAD_SPILLS"])
-        expected_loads = NVAR*2 + NDIM + 2 ## 10x variables, 3D edge vector, 2x node ids
-        expected_stores = NVAR*2 + NDIM ## 10x variables, 3D edge vector
         # if verbose:
-        #     print("loop at {0}: loads={1}, stores={2}".format(loops[l_idx].start, l_loads, l_stores))
+        #     print(" loop at {0}: loads={1}, stores={2}".format(loops[l_idx].start, l_loads, l_stores))
         l_is_gather = abs(l_loads - expected_loads) <= 1 and abs(l_stores - expected_stores) <= 1
         if l_is_gather:
           if gather_loop_idx is None:
@@ -929,7 +933,8 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
             print(" expected ins/iter is now {0:.2f}".format(expected_ins_per_iter))
     ## Adjust for nested loops needing small number of 'admin' instructions outside:
     # nested_loop_admin_instructions = 6
-    nested_loop_admin_instructions = 10
+    # nested_loop_admin_instructions = 10
+    nested_loop_admin_instructions = 15
     expected_ins_per_iter -= float(nested_loop_admin_instructions)
     if verbose:
       print(" deducted {0} admin instructions, expected ins/iter is now {1:.2f}".format(nested_loop_admin_instructions, expected_ins_per_iter))
