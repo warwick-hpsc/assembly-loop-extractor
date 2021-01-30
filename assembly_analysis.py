@@ -870,7 +870,9 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
               scatter_loop_idx = l_idx
               scatter_loop_stats = ls
       if scatter_loop_idx is None:
-        raise Exception("Failed to identify scatter loop")
+        # raise Exception("Failed to identify scatter loop")
+        ## Update: it's now ok for scatter loop to be fully unrolled, logic can handle it
+        pass
       else:
         ## Remove loop, and reduce expected ins/iter:
         serial_scatter_loop = loops[scatter_loop_idx]
@@ -939,7 +941,7 @@ def extract_loop_kernel_from_obj(obj_filepath, compile_info,
     if verbose:
       print(" deducted {0} admin instructions, expected ins/iter is now {1:.2f}".format(nested_loop_admin_instructions, expected_ins_per_iter))
 
-    if not gather_loop_idx is None:
+    if (not gather_loop is None) and (not scatter_loop is None):
       ## Exclude any loops not inbetween gather and scatter:
       start = min(gather_loop.end,   scatter_loop.end)
       end   = max(gather_loop.start, scatter_loop.start)
