@@ -116,6 +116,9 @@ def categorise_aggregated_instructions_tally_csv(tally_filepath, is_aarch64=Fals
     elif insn == "store_spills":
       eu_tally["mem.store_spills"] += count
       continue
+    elif insn in ["load_bytes", "store_bytes"]:
+      ## Ignore
+      continue
 
     eu = map_insn_to_exec_unit(insn, eu_mapping)
     exec_unit_found = eu != ""
@@ -183,9 +186,6 @@ def categorise_aggregated_instructions_tally_dict(tally, is_aarch64=False, is_in
 
     insn = insn.lower()
 
-    if insn in ["unroll_factor"]:
-      continue
-
     if insn == "loads":
       eu_tally["mem.loads"] += count
       continue
@@ -198,6 +198,9 @@ def categorise_aggregated_instructions_tally_dict(tally, is_aarch64=False, is_in
     elif insn == "store_spills":
       eu_tally["mem.store_spills"] += count
       continue
+    elif insn in ["load_bytes", "store_bytes"]:
+      ## Ignore
+      continue
 
     eu = map_insn_to_exec_unit(insn, eu_mapping)
     exec_unit_found = eu != ""
@@ -207,5 +210,8 @@ def categorise_aggregated_instructions_tally_dict(tally, is_aarch64=False, is_in
 
   if "eu.DISCARD" in eu_tally.keys():
     del eu_tally["eu.DISCARD"]
+
+  if "eu.address" in eu_tally.keys():
+    del eu_tally["eu.address"]
 
   return eu_tally
